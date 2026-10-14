@@ -11,11 +11,25 @@ export interface DatabaseConfig {
   readonly connectDeadlineMs: number;
 }
 
+/**
+ * How bearer tokens are verified. The issuer is the exact string the identity provider
+ * puts in "iss", which is the address browsers use. The key set is fetched from
+ * jwksUrl, which inside the compose network is a different address for the same
+ * provider, so the two are separate settings.
+ */
+export interface AuthConfig {
+  readonly issuer: string;
+  readonly jwksUrl: string;
+  /** The "aud" value a token must carry. */
+  readonly audience: string;
+}
+
 export interface Config {
   readonly http: { readonly host: string; readonly port: number };
   /** Name of this replica, returned by GET /health. */
   readonly instance: string;
   readonly database: DatabaseConfig;
+  readonly auth: AuthConfig;
 }
 
 export interface MigrateConfig {
@@ -47,6 +61,11 @@ export function loadConfig(env: Env): Config {
       url: read.postgresUrl('RFF_DATABASE_URL'),
       poolMax: read.integer('RFF_DB_POOL_MAX', 10, 1, 1000),
       connectDeadlineMs: read.integer('RFF_DB_CONNECT_DEADLINE_MS', 30_000, 0, 600_000),
+    },
+    auth: {
+      issuer: read.string('RFF_AUTH_ISSUER'),
+      jwksUrl: read.httpUrl('RFF_AUTH_JWKS_URL'),
+      audience: read.string('RFF_AUTH_AUDIENCE', 'rff-api'),
     },
   };
   read.done();
@@ -118,6 +137,22 @@ class Reader {
       this.problems.push(`${name} must start with postgres:// or postgresql://`);
     } else if (parsed.hostname === '' || parsed.pathname.length < 2) {
       this.problems.push(`${name} must name a host and a database`);
+    }
+    return value;
+  }
+
+  httpUrl(name: string): string {
+    const value = this.string(name);
+    if (value === '') return value;
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      this.problems.push(`${name} is not a URL`);
+      return value;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      this.problems.push(`${name} must start with http:// or https://`);
     }
     return value;
   }

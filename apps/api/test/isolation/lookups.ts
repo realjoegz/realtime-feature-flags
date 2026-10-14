@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import type { AllowedDefiner, LookupCase, SettingValue } from './detectors.js';
 import type { Fixture } from './fixture.js';
 
-// The SECURITY DEFINER functions of migration 0002 and the calls that show each one
+// The SECURITY DEFINER functions of migrations 0002 and 0003 and the calls that show each one
 // returns the caller's row or NULL, and nothing about any other row. A new SECURITY
 // DEFINER function fails the allow-list check until it is listed here with cases.
 
@@ -11,11 +11,13 @@ const LOOKUP: AllowedDefiner = { owner: 'rff_owner', config: ['search_path=pg_ca
 export const USER_LOOKUP = 'public.user_id_for_subject(text, text)';
 export const ROLE_LOOKUP = 'public.member_role_in_tenant(uuid, uuid)';
 export const KEY_LOOKUP = 'public.tenant_id_for_sdk_key(bytea)';
+export const MEMBERSHIPS_LOOKUP = 'public.memberships_of_user(uuid)';
 
 export const DEFINER_ALLOW_LIST: Readonly<Record<string, AllowedDefiner>> = {
   [USER_LOOKUP]: LOOKUP,
   [ROLE_LOOKUP]: LOOKUP,
   [KEY_LOOKUP]: LOOKUP,
+  [MEMBERSHIPS_LOOKUP]: LOOKUP,
 };
 
 function userCase(
@@ -56,6 +58,40 @@ function keyCase(label: string, hash: Buffer | null, expected: string | null): L
   };
 }
 
+interface TenantOfUser {
+  readonly tenantId: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly role: string;
+}
+
+/** The text of the jsonb array memberships_of_user returns, as Postgres prints it. */
+function membershipsText(entries: readonly TenantOfUser[]): string {
+  const element = (entry: TenantOfUser): string =>
+    `{"name": ${JSON.stringify(entry.name)}, "role": ${JSON.stringify(entry.role)}, ` +
+    `"slug": ${JSON.stringify(entry.slug)}, "tenantId": ${JSON.stringify(entry.tenantId)}}`;
+  return `[${entries.map(element).join(', ')}]`;
+}
+
+/** Ordered by slug in byte order, as the function orders them. */
+function bySlug(entries: TenantOfUser[]): TenantOfUser[] {
+  return entries.toSorted((x, y) => (x.slug < y.slug ? -1 : x.slug > y.slug ? 1 : 0));
+}
+
+function membershipsCase(
+  label: string,
+  userId: string | null,
+  expected: readonly TenantOfUser[] | null,
+): LookupCase {
+  return {
+    signature: MEMBERSHIPS_LOOKUP,
+    label: `memberships of ${label}`,
+    sql: 'SELECT public.memberships_of_user($1::uuid)::text AS value',
+    params: [userId],
+    expected: expected === null ? null : membershipsText(expected),
+  };
+}
+
 export function lookupCases(fixture: Fixture): LookupCase[] {
   const { shared, aEditor, aViewer, bEditor, nobody } = fixture.users;
   const { tenantA: A, tenantB: B } = fixture;
@@ -63,6 +99,11 @@ export function lookupCases(fixture: Fixture): LookupCase[] {
   const unknownTenant = randomUUID();
 
   const { aActive, aRevoked, bActive } = fixture.sdkKeys;
+  const tenantOf = (tenantId: string, role: string): TenantOfUser => {
+    const tenant = fixture.tenants.find((candidate) => candidate.id === tenantId);
+    if (tenant === undefined) throw new Error(`no tenant ${tenantId} in the fixture`);
+    return { tenantId, slug: tenant.slug, name: tenant.name, role };
+  };
 
   return [
     userCase("the shared user's issuer and subject", shared.issuer, shared.subject, shared.id),
@@ -104,6 +145,17 @@ export function lookupCases(fixture: Fixture): LookupCase[] {
     keyCase("A's key itself instead of its hash", Buffer.from(aActive.key), null),
     keyCase('an empty hash', Buffer.alloc(0), null),
     keyCase('NULL', null, null),
+
+    membershipsCase(
+      'the shared user',
+      shared.id,
+      bySlug([tenantOf(A, 'owner'), tenantOf(B, 'viewer')]),
+    ),
+    membershipsCase("A's editor", aEditor.id, [tenantOf(A, 'editor')]),
+    membershipsCase("B's editor", bEditor.id, [tenantOf(B, 'editor')]),
+    membershipsCase('a user in no tenant', nobody.id, []),
+    membershipsCase('an unknown user', unknownUser, []),
+    membershipsCase('NULL', null, null),
   ];
 }
 

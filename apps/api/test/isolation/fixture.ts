@@ -77,9 +77,18 @@ export interface FixtureSdkKey {
   readonly revoked: boolean;
 }
 
+export interface FixtureTenant {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly version: number;
+}
+
 export interface Fixture {
   readonly tenantA: string;
   readonly tenantB: string;
+  /** A, whose slug and name are canaries, then B. */
+  readonly tenants: readonly FixtureTenant[];
   readonly users: {
     /** Owner in A and viewer in B. */
     readonly shared: FixtureUser;
@@ -159,7 +168,7 @@ export function createFixture(): Fixture {
     bActive: sdkKey(tenantB, false),
   };
 
-  const tenants = [
+  const tenants: FixtureTenant[] = [
     {
       id: tenantA,
       slug: canary('public.tenants.slug'),
@@ -332,6 +341,7 @@ export function createFixture(): Fixture {
   return {
     tenantA,
     tenantB,
+    tenants,
     users,
     sdkKeys,
     contexts: {

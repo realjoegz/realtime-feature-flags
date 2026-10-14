@@ -12,6 +12,7 @@ import {
   type ScratchRole,
 } from './harness/context.js';
 import { ident } from './harness/settings.js';
+import { UNUSED_AUTH } from './support/api.js';
 
 // The API refuses to start as a role that row-level security does not bind. Each case
 // connects as a role with one such privilege to a scratch database and reads the
@@ -102,6 +103,7 @@ function configFor(url: string): Config {
     http: { host: '127.0.0.1', port: 0 },
     instance: 'role-check',
     database: { url, poolMax: 2, connectDeadlineMs: 5000 },
+    auth: { ...UNUSED_AUTH, audience: 'rff-api' },
   };
 }
 

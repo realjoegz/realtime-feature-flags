@@ -42,6 +42,7 @@ import {
   DEFINER_ALLOW_LIST,
   KEY_LOOKUP,
   lookupCases,
+  MEMBERSHIPS_LOOKUP,
   ROLE_LOOKUP,
   settingValues,
   USER_LOOKUP,
@@ -237,7 +238,12 @@ describe('tenant isolation in the tables', () => {
 
   it('every SECURITY DEFINER function is on the allow-list, owned by rff_owner with search_path pg_catalog, pg_temp, returns one value, and is executable by rff_app and not by PUBLIC', async () => {
     const functions = await definerFunctions(admin, 'rff_app');
-    expect(functions.map((fn) => fn.signature)).toEqual([ROLE_LOOKUP, KEY_LOOKUP, USER_LOOKUP]);
+    expect(functions.map((fn) => fn.signature)).toEqual([
+      ROLE_LOOKUP,
+      MEMBERSHIPS_LOOKUP,
+      KEY_LOOKUP,
+      USER_LOOKUP,
+    ]);
     expect(describeFindings(definerFindings(functions, DEFINER_ALLOW_LIST))).toEqual([]);
   });
 
@@ -251,8 +257,8 @@ describe('tenant isolation in the tables', () => {
       settings.user,
     );
     expect(describeFindings(findings)).toEqual([]);
-    expect(cases).toHaveLength(32);
-    expect(calls).toBe(32 * 25);
+    expect(cases).toHaveLength(38);
+    expect(calls).toBe(38 * 25);
     // Every function on the allow-list has cases, and each returns a row in some.
     for (const signature of Object.keys(DEFINER_ALLOW_LIST)) {
       const own = cases.filter((lookup) => lookup.signature === signature);
@@ -358,6 +364,7 @@ describe('tenant isolation in the tables', () => {
         `${USER_LOOKUP}: is on the allow-list but does not exist`,
         `${ROLE_LOOKUP}: is on the allow-list but does not exist`,
         `${KEY_LOOKUP}: is on the allow-list but does not exist`,
+        `${MEMBERSHIPS_LOOKUP}: is on the allow-list but does not exist`,
         'public.peek(): is SECURITY DEFINER and not on the allow-list: add it with its cases',
       ]);
     } finally {
@@ -578,11 +585,19 @@ describe('tenant isolation in the tables', () => {
         settings.tenant,
         settings.user,
       );
-      expect(relationsWithFindings(findings)).toEqual([ROLE_LOOKUP, KEY_LOOKUP, USER_LOOKUP]);
+      expect(relationsWithFindings(findings)).toEqual([
+        ROLE_LOOKUP,
+        MEMBERSHIPS_LOOKUP,
+        KEY_LOOKUP,
+        USER_LOOKUP,
+      ]);
       const details = describeFindings(findings).join('\n');
       expect(details).toContain("user for the shared user's subject at another issuer");
       expect(details).toContain('role of the shared user in B with app.tenant_id A');
       expect(details).toContain("tenant for A's revoked key");
+      expect(details).toContain(
+        "memberships of A's editor with app.tenant_id A and app.user_id the shared user",
+      );
       expect(
         describeFindings(
           definerFindings(await definerFunctions(brokenAdmin, 'rff_app'), DEFINER_ALLOW_LIST),

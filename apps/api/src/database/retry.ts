@@ -41,10 +41,18 @@ export async function withConnectRetry<T>(
       return await attempt();
     } catch (error) {
       if (!isTransientConnectError(error)) throw error;
-      const elapsedMs = Math.round(performance.now() - started);
+      // Unrounded, so the loop never gives up before the deadline; a timer can also
+      // fire up to a millisecond early, which the next turn of the loop absorbs.
+      const elapsedMs = performance.now() - started;
       const remainingMs = options.deadlineMs - elapsedMs;
-      if (remainingMs <= 0) throw new DatabaseUnreachableError(attempts, elapsedMs, error);
-      const delayMs = Math.min(initialDelayMs * 2 ** (attempts - 1), maxDelayMs, remainingMs);
+      if (remainingMs <= 0) {
+        throw new DatabaseUnreachableError(attempts, Math.round(elapsedMs), error);
+      }
+      const delayMs = Math.min(
+        initialDelayMs * 2 ** (attempts - 1),
+        maxDelayMs,
+        Math.ceil(remainingMs),
+      );
       options.onRetry?.(attempts, error, delayMs);
       // eslint-disable-next-line no-await-in-loop -- the delay between two attempts
       await sleep(delayMs);

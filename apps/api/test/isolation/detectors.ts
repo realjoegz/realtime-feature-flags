@@ -106,7 +106,7 @@ function hasTupleVersions(relation: Relation): boolean {
   return relation.kind === 'r' || relation.kind === 'p';
 }
 
-interface Rows {
+export interface Rows {
   n: number;
   sum: string;
 }
@@ -119,6 +119,26 @@ async function adminRows(
 ): Promise<Rows> {
   const { rows } = await subject.admin.query<Rows>(rowsQuery(relation, where, versioned));
   return rows[0] as Rows;
+}
+
+/**
+ * The count and checksum, xmin included, of the rows that scope sees in each relation
+ * that has a tenancy rule, read on the admin connection. The route checks compare
+ * A's rows before and after requests made by B's members.
+ */
+export async function visibleRowSums(
+  admin: pg.ClientBase,
+  relations: readonly Relation[],
+  rule: (relation: Relation) => TenancyRule | undefined,
+  scope: Scope,
+): Promise<Map<string, Rows>> {
+  const sums = await inSequence(relations, async (relation) => {
+    const found = rule(relation);
+    if (found === undefined) return undefined;
+    const { rows } = await admin.query<Rows>(rowsQuery(relation, visible(found, scope), true));
+    return [relation.name, rows[0] as Rows] as const;
+  });
+  return new Map(sums.filter((entry) => entry !== undefined));
 }
 
 /** The rows outside B, with their tuple versions: an UPDATE that touches a row changes its xmin. */

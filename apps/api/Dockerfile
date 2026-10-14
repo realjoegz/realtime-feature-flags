@@ -14,12 +14,17 @@ COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/core/package.json packages/core/
 COPY apps/api/package.json apps/api/
 RUN npm ci --workspace @rff/api --include-workspace-root --ignore-scripts --no-audit --no-fund
+# @rff/core first: the API imports it, and tsc reads its declarations from its dist.
+COPY packages/core/tsconfig.json packages/core/tsconfig.build.json packages/core/
+COPY packages/core/src packages/core/src
+RUN npm run build --workspace @rff/core
 COPY apps/api/tsconfig.json apps/api/tsconfig.build.json apps/api/
 COPY apps/api/src apps/api/src
 RUN npm run build --workspace @rff/api
 
-# The runtime dependencies (Nest, Express, pg, rxjs) are JavaScript with no native
-# addons, so they install on the build platform as well.
+# The runtime dependencies (Nest, Express, pg, rxjs, jose) are JavaScript with no
+# native addons, so they install on the build platform as well. npm links the
+# workspace package @rff/core into node_modules as ../../packages/core.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS runtime-deps
 WORKDIR /src
 COPY package.json package-lock.json ./
@@ -32,6 +37,10 @@ ENV NODE_ENV=production
 WORKDIR /app
 # Files stay owned by root, so the process cannot change its own code.
 COPY --from=runtime-deps /src/node_modules node_modules
+# The target of the node_modules/@rff/core link. The API imports it when it starts,
+# so an image without it does not start and fails the compose healthcheck.
+COPY packages/core/package.json packages/core/
+COPY --from=build /src/packages/core/dist packages/core/dist
 COPY apps/api/package.json apps/api/
 COPY apps/api/migrations apps/api/migrations
 COPY --from=build /src/apps/api/dist apps/api/dist

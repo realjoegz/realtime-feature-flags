@@ -3,7 +3,11 @@ import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { connectClient } from '../src/database/connect.js';
 import { createPool } from '../src/database/pool.js';
-import { TenantDatabase, TRANSACTION_ENDED } from '../src/database/tenant-database.js';
+import {
+  TenantDatabase,
+  TRANSACTION_ABORTED,
+  TRANSACTION_ENDED,
+} from '../src/database/tenant-database.js';
 import { adminClient, createMigratedDatabase, harness } from './harness/context.js';
 import { createFixture, type Fixture } from './isolation/fixture.js';
 
@@ -78,6 +82,22 @@ describe('withTenant', () => {
     });
   });
 
+  it('withUser runs fn in one transaction with app.user_id set and app.tenant_id empty, and the reused connection reads neither afterwards', async () => {
+    await withPool(1, async (db, pool) => {
+      const userId = randomUUID();
+      const inside = await db.withUser(userId, async (client) => {
+        return (await client.query<Session>(SESSION)).rows[0] as Session;
+      });
+      expect(inside).toMatchObject({ tenant: '', user: userId });
+      expect((await pool.query<Session>(SESSION)).rows[0]).toEqual({
+        tenant: '',
+        user: '',
+        pid: inside.pid,
+      });
+      await expect(db.withUser('not-a-uuid', nothing)).rejects.toThrow(TypeError);
+    });
+  });
+
   it('the settings end with the transaction: the reused connection reads none after a COMMIT or a ROLLBACK', async () => {
     await withPool(1, async (db, pool) => {
       const inside = await db.withTenant(scope(), async (client) => {
@@ -139,6 +159,21 @@ describe('withTenant', () => {
         return ((await client.query<Session>(SESSION)).rows[0] as Session).pid;
       });
       expect(next).toBe(pid);
+    });
+  });
+
+  it('rejects when fn catches a failed statement and returns, because COMMIT then rolled the transaction back', async () => {
+    await withPool(1, async (db, pool) => {
+      let xid = '';
+      await expect(
+        db.withTenant(scope(), async (client) => {
+          xid = (await client.query<{ xid: string }>(XACT)).rows[0]?.xid ?? '';
+          await client.query('SELECT 1 / 0').catch(() => {});
+          return 'returned normally';
+        }),
+      ).rejects.toThrow(TRANSACTION_ABORTED);
+      expect(await status(pool, xid)).toBe('aborted');
+      expect({ total: pool.totalCount, idle: pool.idleCount }).toEqual({ total: 1, idle: 1 });
     });
   });
 

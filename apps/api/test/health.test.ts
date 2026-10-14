@@ -7,12 +7,14 @@ import { AppModule } from '../src/app.module.js';
 import { type Config } from '../src/config.js';
 import { PG_POOL } from '../src/tokens.js';
 import { harness } from './harness/context.js';
+import { UNUSED_AUTH } from './support/api.js';
 
 function config(instance: string): Config {
   return {
     http: { host: '127.0.0.1', port: 0 },
     instance,
     database: { url: harness().appUrl, poolMax: 2, connectDeadlineMs: 5000 },
+    auth: { ...UNUSED_AUTH, audience: 'rff-api' },
   };
 }
 

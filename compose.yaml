@@ -17,11 +17,17 @@
 
 name: rff
 
-# The API containers get the app role's credentials and nothing else.
+# The API containers get the app role's credentials and nothing else. Tokens are
+# verified against Dex, which joins this file in a later step: the issuer is the
+# address browsers use, and the key set is fetched over the compose network. The
+# key set is fetched on the first request with a token, so the API starts without it.
 x-api-environment: &api-environment
   RFF_DATABASE_URL: postgres://rff_app:rff-app-local@postgres:5432/rff
   RFF_HTTP_HOST: 0.0.0.0
   RFF_HTTP_PORT: '4000'
+  RFF_AUTH_ISSUER: http://127.0.0.1:5556/dex
+  RFF_AUTH_JWKS_URL: http://dex:5556/dex/keys
+  RFF_AUTH_AUDIENCE: rff-api
 
 # Shared by api-1 and api-2. The image is built by the migrate service below and is
 # never pulled, because no registry has it.

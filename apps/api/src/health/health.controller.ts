@@ -1,5 +1,6 @@
 import { Controller, Get, Inject, ServiceUnavailableException } from '@nestjs/common';
 import { type Config } from '../config.js';
+import { Access } from '../auth/access.js';
 import { CONFIG } from '../tokens.js';
 import { HealthService } from './health.service.js';
 
@@ -17,6 +18,7 @@ export class HealthController {
   ) {}
 
   @Get('health')
+  @Access('public')
   async check(): Promise<HealthBody> {
     if (await this.health.databaseAnswers()) {
       return { status: 'ok', instance: this.config.instance };
