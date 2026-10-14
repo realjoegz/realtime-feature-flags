@@ -18,7 +18,8 @@ import { CONFIG } from '../tokens.js';
 // capped backoff. While a connection is down its commands fail at once instead of
 // waiting in a queue: a cache read then goes to Postgres, and a notification that
 // cannot be published is logged. Correctness never depends on Redis: the safety
-// poll and the read when a stream opens find every change in Postgres.
+// poll and the read when a stream opens bring every stream to the latest version
+// in Postgres.
 
 /** How long one command may wait for its reply. */
 const COMMAND_TIMEOUT_MS = 2000;
