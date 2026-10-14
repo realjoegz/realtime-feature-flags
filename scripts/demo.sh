@@ -270,7 +270,7 @@ ok "no dashboard response body (7 of them) holds a JWT, such as alice's access t
 reply="$(call PUT "$API_1/tenants/$acme/flags/dark-mode" "$bob" "{\"enabled\":false,\"rules\":$rules,\"rolloutBasisPoints\":0}")"
 [[ "$reply" == '403 {"message":"Forbidden","statusCode":403}' ]] ||
   fail "PUT dark-mode as bob, a viewer of acme: expected 403, got $reply"
-ok "PUT $API_1/tenants/acme/flags/dark-mode as bob, a viewer of acme -> 403"
+ok "PUT $API_1/tenants/$acme/flags/dark-mode as bob, a viewer of acme -> 403"
 
 # --- 6. another tenant's flags look like no tenant at all ---------------------------
 
@@ -278,6 +278,6 @@ other="$(call GET "$API_1/tenants/$acme/flags" "$dave")"
 none="$(call GET "$API_1/tenants/$NO_TENANT/flags" "$dave")"
 [[ "${other%% *}" == 404 && "$other" == "$none" ]] ||
   fail "GET acme's flags as dave, only in globex: expected the reply for a tenant that does not exist ($none), got $other"
-ok "GET $API_1/tenants/acme/flags as dave, only in globex -> $other, the same as for a tenant that does not exist"
+ok "GET $API_1/tenants/$acme/flags as dave, only in globex -> $other, the same as for a tenant that does not exist"
 
 echo "demo: all checks passed"
