@@ -271,22 +271,22 @@ const twoAppsWith = (cache: CacheClass): AppChanges[] =>
 const details = (findings: readonly Finding[]): string[] =>
   findings.map((finding) => `${finding.relation}: ${finding.detail}`);
 
-describe('tenant isolation across two instances, in the stream and the cache', () => {
-  it("SDK clients of A and B on both instances: after A changes and then B, at the same version, the first data frame on each of B's streams after the marker is B's own change as the database holds it, A's clients hold A's change, and nothing B's clients receive holds a canary of A", async () => {
+describe('cross-instance isolation', () => {
+  it("B's clients first get B's change, with no canary of A", async () => {
     expect(details(await streamFindings(env))).toEqual([]);
   });
 
-  it("with A's cache warm at the version B is at, GET /flags and POST /evaluate as B on either instance return B's flags and evaluations, with no canary of A", async () => {
+  it("with A's cache warm, B's reads return B's data", async () => {
     expect(details(await cacheReadFindings(env))).toEqual([]);
   });
 
-  it("after the cases above, every key under the environment's Redis prefix is <prefix>:flags:<tenant>:v<version> for A or B, and holds the snapshot of that tenant and version as the database holds it", async () => {
+  it('afterwards every Redis key is <prefix>:flags:<tenant>:v<version> of A or B and holds that snapshot', async () => {
     const { findings, keys } = await keyFindings(env);
     expect(details(findings)).toEqual([]);
     expect(keys).toBeGreaterThanOrEqual(2);
   });
 
-  it("control: with a cache whose key leaves out the tenant, the key check reports every entry; the entry's own tenant still keeps B's reads and streams to B's flags; without that check as well, B's reads return A's flags and B's streams receive A's snapshot, with A's canaries, and the read and stream checks report it", async () => {
+  it('control: a cache key without the tenant is reported', async () => {
     const keyless = await startEnvironment('isokeyless', twoAppsWith(TenantlessKeyCache));
     try {
       expect(details(await streamFindings(keyless))).toEqual([]);

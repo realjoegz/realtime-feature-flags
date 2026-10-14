@@ -4,9 +4,9 @@ import { failureOf, SIMULATION_LABEL, SPLIT_DELAY_MS } from './support/simulatio
 // The convergence property of convergence.test.ts against broken configurations and
 // apps. Each control passes only when the property fails, for the reason named.
 
-describe('convergence on two instances, controls', () => {
+describe('convergence', () => {
   it(
-    `control: with the safety poll off, every notification lost and no read when a stream opens, the clients do not converge ${SIMULATION_LABEL}`,
+    `control: with no poll, no notifications and no read on connect, clients do not converge ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const message = await failureOf('convnone', {
@@ -19,7 +19,7 @@ describe('convergence on two instances, controls', () => {
   );
 
   it(
-    `control: with the safety poll off and no read when a stream opens, a client that missed changes while it was disconnected does not converge, although notifications are delivered ${SIMULATION_LABEL}`,
+    `control: with no poll and no read on connect, a client does not converge ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const message = await failureOf('convnoreplay', {
@@ -32,7 +32,7 @@ describe('convergence on two instances, controls', () => {
   );
 
   it(
-    `control: with every notification lost and the safety poll off, clients that stay connected do not converge, although streams that open are read for ${SIMULATION_LABEL}`,
+    `control: with no notifications and no poll, clients do not converge ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const message = await failureOf('convnopolldropped', {
@@ -45,7 +45,7 @@ describe('convergence on two instances, controls', () => {
   );
 
   it(
-    `control: a read that takes the version and the flags ${SPLIT_DELAY_MS} ms apart fails the check that each applied snapshot holds the flags of its version ${SIMULATION_LABEL}`,
+    `control: reading version and flags ${SPLIT_DELAY_MS} ms apart fails the check that each applied snapshot matches its version ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const message = await failureOf('convsplit', {

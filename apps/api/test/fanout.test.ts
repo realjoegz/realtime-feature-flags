@@ -94,8 +94,8 @@ function withRecordingReader(builder: TestingModuleBuilder): TestingModuleBuilde
   });
 }
 
-describe('change notifications between two instances', () => {
-  it("a save through one instance publishes one message {tenantId, version} on <prefix>:changes, and it brings the tenant's open streams on both instances to the new version with the safety poll off, while neither instance reads the other tenant, whose streams are open on both; messages that are not a change are ignored", async () => {
+describe('notifications', () => {
+  it("a save's notification updates that tenant's streams on both apps", async () => {
     const env = await startEnvironment(
       'fanout',
       [0, 1].map((): AppChanges => ({ configure: withPoll(null), override: withRecordingReader })),
@@ -167,7 +167,7 @@ describe('change notifications between two instances', () => {
     }
   });
 
-  it("after an instance's subscriber loses its connection and is ready again, the instance reads every tenant with open streams, so changes whose notifications it missed reach them with the safety poll off", async () => {
+  it('a subscriber ready again brings the missed changes', async () => {
     const faults = new BusFaults();
     const env = await startEnvironment('fanready', twoApps(null, faults));
     const streams: OpenStream[] = [];
@@ -211,7 +211,7 @@ describe('change notifications between two instances', () => {
     }
   });
 
-  it('control: an instance that does not read again when its subscriber is ready leaves its streams behind the changes it missed until the next notification', async () => {
+  it('control: an app that does not read again falls behind', async () => {
     const faults = new BusFaults();
     const env = await startEnvironment(
       'fannoready',
@@ -241,7 +241,7 @@ describe('change notifications between two instances', () => {
     }
   });
 
-  it(`a publish that throws does not fail the write, and with every notification lost and a safety poll every ${POLL_MS} ms, each of 10 changes reaches an SDK client on the other instance within ${POLL_MS} ms plus a margin of ${POLL_MARGIN_MS} ms, delivered by the poll`, async () => {
+  it(`with notifications lost, a ${POLL_MS} ms poll delivers each change within ${POLL_MS} + ${POLL_MARGIN_MS} ms`, async () => {
     const faults = new BusFaults();
     const env = await startEnvironment('fanpoll', twoApps(POLL_MS, faults));
     const sdkKey = env.world.fixture.sdkKeys.aActive.key;
@@ -286,7 +286,7 @@ describe('change notifications between two instances', () => {
       await env.close();
     }
   });
-  it(`while one app cannot reach Redis it answers reads from Postgres and its writes succeed, each in less than 1 s; the other app's streams get those writes from a safety poll every ${POLL_MS} ms, and once Redis is back the first app's writes reach them by notification again`, async () => {
+  it(`an app cut off from Redis keeps serving, and its writes arrive by the ${POLL_MS} ms poll`, async () => {
     const gate = await Gate.open(harness().redisUrl);
     const [first, second] = twoApps(POLL_MS);
     const behindGate: AppChanges = {

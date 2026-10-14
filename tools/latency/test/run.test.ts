@@ -75,7 +75,7 @@ const counters = (saves: number): Mark => ({
 });
 
 describe('the run', () => {
-  it("a change's t0 is read just before its PUT is sent, its save round trip ends once the response body is read, and its time to the last client runs from t0 to the latest first arrival at the saved version or a later one", async () => {
+  it('t0 is read before the PUT and the round trip after its body', async () => {
     const clock = { now: 100 };
     const arrivals = new Arrivals(2);
     arrivals.record(0, 11, 50);
@@ -107,7 +107,7 @@ describe('the run', () => {
     ).rejects.toThrow('2 clients did not reach version 20 within 20 ms');
   });
 
-  it('with 2 warm-up and 3 measured changes the first 2 are warm-up, each PUT waits until every client holds the version saved before it, the counters are read when the warm-up ends and after the last change, and each phase totals what moved between its readings', async () => {
+  it('with 2 warm-up and 3 measured changes, each PUT waits for every client', async () => {
     const stack = fakeStack();
     const connected = counters(0);
     const progress: number[] = [];
@@ -167,7 +167,7 @@ describe('the run', () => {
     expect(cold.finished).toEqual(counters(2));
   });
 
-  it('the clients alternate between the two replicas, reconnects are the connections after each client its first, and the run fails when the replicas logged fewer snapshots than clients connected', () => {
+  it('alternates clients between replicas, counts reconnects and fails on fewer logged snapshots than clients', () => {
     expect([0, 1, 2, 3, 4].map(replicaOf)).toEqual([0, 1, 0, 1, 0]);
     expect(clientsByReplica(5, ['api-1', 'api-2'])).toEqual({ 'api-1': 3, 'api-2': 2 });
     expect(clientsByReplica(100, ['api-1', 'api-2'])).toEqual({ 'api-1': 50, 'api-2': 50 });

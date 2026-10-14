@@ -98,11 +98,11 @@ it('P6 MurmurHash3_x86_32 gives the 13 published byte vectors', () => {
   }
 });
 
-it('P6 MurmurHash3_x86_32 passes the SMHasher verification test with 0xB0F57EE3', () => {
+it('P6 MurmurHash3_x86_32 passes the SMHasher verification test', () => {
   expect(smhasherVerification(murmur3X86_32)).toBe(SMHASHER_VERIFICATION);
 });
 
-it('P6 a string is hashed as its UTF-8 bytes: the 17 published string vectors, ππππππππ included', () => {
+it('P6 the UTF-8 hash gives the 17 published string vectors, ππππππππ included', () => {
   for (const [text, seed, expected] of STRING_VECTORS) {
     expect(murmur3X86_32Utf8(text, seed), text).toBe(expected);
   }
@@ -114,7 +114,7 @@ it('P6 a string is hashed as its UTF-8 bytes: the 17 published string vectors, �
   expect(details.numRuns).toBeGreaterThanOrEqual(STRING_VECTORS.length);
 });
 
-it('P6 control: hashing UTF-16 code units in place of UTF-8 bytes is falsified on ππππππππ', () => {
+it('P6 control: hashing UTF-16 code units is falsified on ππππππππ', () => {
   const details = fc.check(stringVectorProperty(charCodeHash), {
     ...vectorRuns,
     examples: vectorExamples,
@@ -126,7 +126,7 @@ it('P6 control: hashing UTF-16 code units in place of UTF-8 bytes is falsified o
 
 const referenceBytes: HashBytes = (bytes, seed) => referenceMurmur3([...bytes], seed);
 
-it('P6 the reference MurmurHash3 gives the same published vectors and verification value', () => {
+it('P6 the reference MurmurHash3 gives the same vectors and verification value', () => {
   expect(byteVectorsPass(referenceBytes)).toBe(true);
   for (const [text, seed, expected] of STRING_VECTORS) {
     expect(referenceMurmur3(encodeUtf8(text), seed), text).toBe(expected);
@@ -183,7 +183,7 @@ const FIXED_BUCKETS: readonly [userKey: string, bucket: number][] = [
   ['\uD800', 5342],
 ];
 
-it(`P6 a user's bucket is MurmurHash3_x86_32 of the UTF-8 bytes of flag key, salt and user key joined by dots, seed 0, mod 10000 ${label(BUCKETS)}`, () => {
+it(`P6 a bucket is MurmurHash3_x86_32 of the dot-joined UTF-8 key, salt and user key, mod 10000 ${label(BUCKETS)}`, () => {
   fc.assert(bucketProperty(bucketOf), { ...BUCKETS, examples: bucketExamples });
   for (const [userKey, bucket] of FIXED_BUCKETS) {
     expect(bucketOf(...BUCKET_FLAG, userKey), JSON.stringify(userKey)).toBe(bucket);
@@ -193,7 +193,7 @@ it(`P6 a user's bucket is MurmurHash3_x86_32 of the UTF-8 bytes of flag key, sal
 const charCodeBucket: Bucket = (flagKey, salt, userKey) =>
   charCodeHash(bucketInput(flagKey, salt, userKey), 0) % 10_000;
 
-it(`P6 control: buckets from UTF-16 code units in place of UTF-8 bytes are falsified ${label(BUCKETS)}`, () => {
+it(`P6 control: buckets from UTF-16 code units are falsified ${label(BUCKETS)}`, () => {
   const details = fc.check(bucketProperty(charCodeBucket), {
     ...BUCKETS,
     examples: bucketExamples,

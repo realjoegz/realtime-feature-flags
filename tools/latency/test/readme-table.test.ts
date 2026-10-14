@@ -71,8 +71,8 @@ const later: LatencyResults = {
   },
 };
 
-describe('README latency table', () => {
-  it('with no results files the section between the markers is one line saying that no run is committed', () => {
+describe('latency table', () => {
+  it('with no results files says that no run is committed', () => {
     const directory = resultsDirectory([]);
     expect(readRuns(path.join(directory, 'missing'))).toEqual([]);
     const runs = readRuns(directory);
@@ -82,7 +82,7 @@ describe('README latency table', () => {
     expect(latencyMismatch(readme, runs)).toBeNull();
   });
 
-  it("renders one row per results file, oldest first, with min, median, p95 and max of that run's measured changes only, never averaged across runs, its reconnects and deliveries not brought by a notification, and the conditions all runs share once", () => {
+  it('renders one row per results file, never averaged', () => {
     const runs = readRuns(resultsDirectory([later, earlier]));
     expect(runs.map((run) => run.file)).toEqual([
       'latency-20261014T180005Z.json',
@@ -100,7 +100,7 @@ describe('README latency table', () => {
     );
   });
 
-  it('writes a condition that differs between runs once per run, labelled with the run', () => {
+  it('labels a condition that differs between runs', () => {
     const other = {
       ...later,
       commit: { sha: 'fedcba9876543210fedcba9876543210fedcba98', clean: false },
@@ -114,7 +114,7 @@ describe('README latency table', () => {
     expect(conditions).toContain('; open-file limit 61440 in the measuring process;');
   });
 
-  it('the check fails when the section differs from the rendering, when a marker is missing or repeated, and when bench/results holds an invalid results file or another file', () => {
+  it('the check fails on a stale section, bad markers, an invalid results file or another file', () => {
     const runs = readRuns(resultsDirectory([earlier]));
     const rendered = withLatencyBlock(README, renderLatency(runs));
     expect(latencyMismatch(rendered, runs)).toBeNull();
@@ -177,7 +177,7 @@ describe('README latency table', () => {
     }
   });
 
-  it('a results file reads back as the results that were written, with one change per line', () => {
+  it('a results file reads back as written', () => {
     const text = serializeResults(earlier);
     expect(parseResults(text)).toEqual(earlier);
     const changeLines = text.split('\n').filter((line) => line.startsWith('    {"phase":'));

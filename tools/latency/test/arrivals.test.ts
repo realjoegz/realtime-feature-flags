@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Arrivals } from '../src/arrivals.ts';
 
 describe('arrivals', () => {
-  it("a change's time to the last client runs from its save to the latest of each client's first arrival at the saved version or a later one, so a client that skipped the version counts at the later one, and arrivals before the save do not count", () => {
+  it('the time to the last client ends at the latest first arrival', () => {
     const arrivals = new Arrivals(3);
     for (const client of [0, 1, 2]) arrivals.record(client, 4, 1);
     arrivals.clear();
@@ -16,7 +16,7 @@ describe('arrivals', () => {
     expect(() => arrivals.firstArrivals(6)).toThrow('client 1 has no arrival at 6 or later');
   });
 
-  it('waits until every client holds the version or a later one, and after the deadline names the clients still behind', async () => {
+  it('waits for every client, and at the deadline names those behind', async () => {
     const arrivals = new Arrivals(3);
     arrivals.record(0, 2, 0);
     const reached = arrivals.whenAllAt(2, 1000);

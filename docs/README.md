@@ -3,7 +3,7 @@
 | Document | What it is |
 |---|---|
 | [design.md](design.md) | The design: what the service promises, the stack, evaluation and rollout, tenancy under row-level security, tokens and roles, writes and versions, the stream and its fan-out through Redis, the SDK, the dashboard's sign-in, personal data, the local stack, the alternatives that were rejected and the limits |
-| [evidence.md](evidence.md) | All 63 claims with the tests that prove them, how each section's tests force their cases, the committed broken code they must catch, and the latency method, results and how far to trust them. The build checks every test it names |
+| [evidence.md](evidence.md) | All 58 claims with the tests that prove them, how each section's tests force their cases, the committed broken code they must catch, and the latency method, where its results are and how far to trust them. The build checks every test it names |
 
 Where to start:
 

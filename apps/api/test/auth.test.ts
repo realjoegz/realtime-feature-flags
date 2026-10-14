@@ -46,7 +46,7 @@ const ownerCalls = (tenant: string): Call[] => [
 const now = (): number => Math.floor(Date.now() / 1000);
 
 describe('bearer tokens', () => {
-  it("accepts RS256 and ES256 tokens from the configured issuer for the audience, including Dex's audience list, with the key set at a different address than the issuer", async () => {
+  it('accepts RS256 and ES256 tokens of the configured issuer and audience', async () => {
     const { shared } = env.world.people;
     expect(new URL(env.idp.jwksUrl).origin).not.toBe(new URL(env.idp.issuer).origin);
     const tokens = [
@@ -63,7 +63,7 @@ describe('bearer tokens', () => {
     );
   });
 
-  it('refuses a missing or malformed header, and a token that is expired, not yet valid, from another issuer, for another audience, signed by an unknown key, unsigned (alg none), HS256 signed with the public key, RS384 or PS256 signed with a key in the key set, with an unknown critical header, with a payload that is not a JSON object, or without exp or sub, all with the same 401', async () => {
+  it('refuses each malformed header and each token with one fault with the same 401', async () => {
     const { shared } = env.world.people;
     const subject = shared.subject;
     const claims = env.idp.claims(subject);
@@ -124,7 +124,7 @@ describe('bearer tokens', () => {
     expect(statuses.map((reply) => reply.status)).toEqual([200, 200]);
   });
 
-  it('refuses a valid token for an issuer and subject pair that is not in users, as it refuses an invalid token', async () => {
+  it('gives a valid token of an unknown user the 401 of an invalid one', async () => {
     const { canaryEditorOfA, shared } = env.world.people;
     const unknown = await env.sendWith(
       `Bearer ${await env.idp.token(`nobody-${randomUUID()}`)}`,
@@ -196,7 +196,7 @@ describe('route access', () => {
     expect(env.api.base).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
   });
 
-  it('membership is read on every request: removing a member, adding one back and changing the role apply to the next request', async () => {
+  it('a removal, re-adding or role change applies to the next request', async () => {
     const { viewerOfA } = env.world.people;
     const { tenantA } = env.world.fixture;
     await env.world.seed(env.admin);
@@ -229,7 +229,7 @@ describe('route access', () => {
     expect(statuses).toEqual([200, 403, 404, 201, 403]);
   });
 
-  it('a user in no tenant, a member of another tenant, a tenant that does not exist and a path tenant that is not a UUID all get the same 404', async () => {
+  it('non-members and missing or non-UUID tenants get the same 404', async () => {
     const { outsider, editorOfB, shared } = env.world.people;
     const { tenantA } = env.world.fixture;
     const replies = [
@@ -246,7 +246,7 @@ describe('route access', () => {
     expect((await env.send(shared, flags(tenantA.toUpperCase()))).status).toBe(200);
   });
 
-  it("a role in one tenant gives no rights in another: the shared user, owner in A and viewer in B, may change A's flags and keys and may only read B's", async () => {
+  it("A's owner who views B may change A's flags and keys and only read B's", async () => {
     const { shared } = env.world.people;
     const { tenantA, tenantB } = env.world.fixture;
     await env.world.seed(env.admin);

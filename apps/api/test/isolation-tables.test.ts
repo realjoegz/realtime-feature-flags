@@ -136,8 +136,8 @@ function ownRowsIn(scope: Scope): string {
   return `t.tenant_id = ${uuidLiteral(scope.tenantId)} AND t.user_id = ${uuidLiteral(scope.userId)}`;
 }
 
-describe('tenant isolation in the tables', () => {
-  it('the universe is every table, view, partition and sequence that rff_app holds a privilege on outside the system schemas, minus public.schema_migrations', async () => {
+describe('table isolation', () => {
+  it('the universe is every relation rff_app holds a privilege on', async () => {
     // The six tables of migration 0002 and nothing else: no view, partition or
     // sequence, since audit_log's id is an identity column.
     expect(relations.map((relation) => relation.name)).toEqual(TENANT_TABLES);
@@ -148,11 +148,11 @@ describe('tenant isolation in the tables', () => {
     expect(allowListed).toEqual([]);
   });
 
-  it('every table in the universe has row-level security enabled and forced', () => {
+  it('every table has row-level security enabled and forced', () => {
     expect(describeFindings(rowSecurityFindings(relations))).toEqual([]);
   });
 
-  it('A and B each have rows in every table, and every text and JSON column holds a canary of A in a row that B cannot see', async () => {
+  it('every table has rows of A and B, and every text and JSON column a canary of A', async () => {
     const subject = asApp();
     expect(describeFindings(await seedFindings(subject))).toEqual([]);
     expect(describeFindings(await canaryFindings(subject, fixture.canaries))).toEqual([]);
@@ -166,7 +166,7 @@ describe('tenant isolation in the tables', () => {
     expect(freeText).toHaveLength(13);
   });
 
-  it("A and B have flags with the same keys and different values, and in B's context a read by key returns B's flags only", async () => {
+  it("a read in B by a key A shares returns B's flag", async () => {
     // A check that filtered by flag key alone would find A's flag under the same key.
     const { rows: pairs } = await admin.query<{ key: string; enabled: boolean; rollout: boolean }>(
       `SELECT a.key, a.enabled <> b.enabled AS enabled, a.rollout_bp <> b.rollout_bp AS rollout
@@ -201,7 +201,7 @@ describe('tenant isolation in the tables', () => {
     expect(describeFindings(await selectFindings(asApp()))).toEqual([]);
   });
 
-  it("in B's context an unfiltered UPDATE and an unfiltered DELETE by rff_app change no row outside B, and reach exactly B's rows, or the narrower reach of the command's own policy, where rff_app holds the privilege", async () => {
+  it('in B unfiltered UPDATE and DELETE reach exactly their rows of B', async () => {
     expect(describeFindings(await writeFindings(asApp()))).toEqual([]);
     // Two commands have a reach of their own (migration 0004), and rff_app holds the
     // privilege for both, so the check above ran them and compared their rows.
@@ -213,7 +213,7 @@ describe('tenant isolation in the tables', () => {
     expect(own).toEqual(['DELETE public.memberships', 'UPDATE public.users']);
   });
 
-  it("per-command reach: rff_app's UPDATE of users reaches only the current user's row, and only to set its issuer, subject, email and name to NULL; its DELETE on memberships reaches only the current user's membership in the current tenant; with no tenant set the UPDATE still reaches the current user's row and the DELETE nothing", async () => {
+  it("per-command reach: two policies reach only the current user's rows", async () => {
     const { shared, aEditor, aViewer, bEditor, nobody } = fixture.users;
     const { tenantA: A, tenantB: B } = fixture;
     const names = new Map([
@@ -332,15 +332,15 @@ describe('tenant isolation in the tables', () => {
     }
   });
 
-  it("in B's context rff_app cannot insert a row of A or move a row to A in any table", async () => {
+  it('in B rff_app cannot insert or move a row into A', async () => {
     expect(describeFindings(await crossTenantWriteFindings(asApp()))).toEqual([]);
   });
 
-  it('rff_app reads no rows with no tenant set, on a new connection and on a pooled connection reused after a transaction in A', async () => {
+  it('with no tenant set rff_app reads no rows, also on a reused connection', async () => {
     expect(describeFindings(await noTenantFindings(asApp()))).toEqual([]);
   });
 
-  it('users: rff_app sees the current user and the members of the current tenant, and no other user', async () => {
+  it("users: rff_app sees only the current user and the current tenant's members", async () => {
     const { shared, aEditor, aViewer, bEditor, nobody } = fixture.users;
     const { tenantA: A, tenantB: B } = fixture;
     const cases: { tenant?: string; user?: string; sees: string[] }[] = [
@@ -372,7 +372,7 @@ describe('tenant isolation in the tables', () => {
     }
   });
 
-  it('rff_app is no superuser, lacks BYPASSRLS, owns nothing, can create nothing, holds no TRUNCATE, TRIGGER, REFERENCES or MAINTAIN, and holds only INSERT and SELECT on audit_log', async () => {
+  it('rff_app has no privilege that skips the policies, and only INSERT and SELECT on audit_log', async () => {
     expect(describeFindings(await privilegeFindings(asApp()))).toEqual([]);
     const { rows } = await admin.query<{ privilege: string }>(
       `SELECT privilege FROM unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE',
@@ -385,7 +385,7 @@ describe('tenant isolation in the tables', () => {
     expect(rows.map((row) => row.privilege)).toEqual(['INSERT', 'SELECT']);
   });
 
-  it('every SECURITY DEFINER function is on the allow-list, owned by rff_owner with search_path pg_catalog, pg_temp, returns one value, and is executable by rff_app and not by PUBLIC', async () => {
+  it('every SECURITY DEFINER function is allow-listed, owned by rff_owner, pinned to pg_catalog, pg_temp, single-valued and executable by rff_app, not PUBLIC', async () => {
     const functions = await definerFunctions(admin, 'rff_app');
     expect(functions.map((fn) => fn.signature)).toEqual([
       ROLE_LOOKUP,
@@ -396,7 +396,7 @@ describe('tenant isolation in the tables', () => {
     expect(describeFindings(definerFindings(functions, DEFINER_ALLOW_LIST))).toEqual([]);
   });
 
-  it("each look-up function returns the caller's row or NULL, the same under all 25 combinations of app.tenant_id and app.user_id", async () => {
+  it("each look-up returns the caller's row or NULL under all 25 settings", async () => {
     const cases = lookupCases(fixture);
     const settings = settingValues(fixture);
     const { findings, calls } = await lookupFindings(
@@ -416,7 +416,7 @@ describe('tenant isolation in the tables', () => {
     }
   });
 
-  it('control: the same detectors on the superuser connection report every table', async () => {
+  it('control: the detectors on the superuser connection report every table', async () => {
     const subject = asSuperuser();
     for (const findings of [
       await selectFindings(subject),
@@ -435,7 +435,7 @@ describe('tenant isolation in the tables', () => {
     expect(privileges).toContain('public.audit_log: holds TRUNCATE');
   });
 
-  it('control: the same detectors on a table without row-level security in a scratch database report it', async () => {
+  it('control: the detectors report a scratch table without row-level security', async () => {
     const scratch = await createScratchDatabase('isoplain');
     const role = await createScratchRole('isoplain');
     const plain = await connectClient(scratch.adminUrl, 'rff-test-isolation');
@@ -521,7 +521,7 @@ describe('tenant isolation in the tables', () => {
     }
   });
 
-  it('control: tables whose policies have one defect each, a foreign key that reaches across tenants, and a pool that does not reuse its connection, are each reported by the check that covers it', async () => {
+  it('control: broken policies, a cascade and a pool are each reported', async () => {
     const scratch = await createScratchDatabase('isodefects');
     const role = await createScratchRole('isodefects');
     const plain = await connectClient(scratch.adminUrl, 'rff-test-isolation');
@@ -661,7 +661,7 @@ describe('tenant isolation in the tables', () => {
     }
   });
 
-  it("control: a declared reach wider than its policy's, such as a user's deletion reaching the user's memberships in every tenant, is reported by the reach count; a DELETE policy that reaches the current user's rows in every tenant is reported by the outside-B checksum, which a declared reach does not change; and one that reaches as many rows of B as declared, but another user's, is reported by the checksum of the rows outside the declared reach", async () => {
+  it('control: a wrong declared reach and two wide DELETE policies are reported', async () => {
     // The migrated schema, with memberships' DELETE declared to reach the shared
     // user's memberships in every tenant. The policy reaches only the one in B.
     const memberships = relations.filter((relation) => relation.name === 'public.memberships');
@@ -765,7 +765,7 @@ describe('tenant isolation in the tables', () => {
     }
   });
 
-  it('control: SECURITY DEFINER functions that each break one rule of the allow-list are reported', async () => {
+  it('control: SECURITY DEFINER functions breaking one rule each are reported', async () => {
     const scratch = await createScratchDatabase('isodefiners');
     const role = await createScratchRole('isodefiners');
     const owner = await createScratchGroup('isodefinerowner');
@@ -823,7 +823,7 @@ describe('tenant isolation in the tables', () => {
     }
   });
 
-  it('control: look-up functions with one defect each, and an unlisted SECURITY DEFINER function, are reported', async () => {
+  it('control: defective look-ups and an unlisted SECURITY DEFINER function are reported', async () => {
     const broken = await createMigratedDatabase('isolookups');
     const brokenAdmin = await connectClient(broken.adminUrl, 'rff-test-isolation');
     try {

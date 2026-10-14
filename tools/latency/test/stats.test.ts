@@ -35,7 +35,7 @@ function byDefinition(values: readonly number[]) {
 const upTo = (n: number) => Array.from({ length: n }, (_, index) => n - index);
 
 describe('summarize', () => {
-  it(`gives the smallest and largest sample, the middle sample or the mean of the two middle ones, and as p95 the smallest sample with at least 95 percent of the samples at or below it, without changing its input (seed ${SEED}, ${RUNS} runs)`, () => {
+  it(`gives min, median, nearest-rank p95 and max (seed ${SEED}, ${RUNS} runs)`, () => {
     fc.assert(
       fc.property(fc.array(sample, { minLength: 1, maxLength: 200 }), (values) => {
         const before = [...values];
@@ -46,7 +46,7 @@ describe('summarize', () => {
     );
   });
 
-  it('for 1 to 20 ms gives median 10.5 and p95 19, for 1 to 100 ms median 50.5 and p95 95, and for one sample that sample throughout; it refuses no samples and samples that are not finite', () => {
+  it('gives the known summaries of three sample sets and refuses empty or non-finite input', () => {
     expect(summarize(upTo(20))).toEqual({ count: 20, min: 1, median: 10.5, p95: 19, max: 20 });
     expect(summarize(upTo(100))).toEqual({ count: 100, min: 1, median: 50.5, p95: 95, max: 100 });
     expect(summarize([7.25])).toEqual({ count: 1, min: 7.25, median: 7.25, p95: 7.25, max: 7.25 });

@@ -187,7 +187,7 @@ function mutations(): Mutation[] {
 }
 
 describe('audit log', () => {
-  it('the mutations below are every route that changes data: each case-table route other than the GETs and POST /evaluate', () => {
+  it('the mutation list is every case-table route but the GETs and POST /evaluate', () => {
     const changing = ROUTE_CASES.filter(
       (routeCase) =>
         !routeCase.route.startsWith('GET ') &&
@@ -196,7 +196,7 @@ describe('audit log', () => {
     expect(mutations().map((mutation) => mutation.route)).toEqual(changing);
   });
 
-  it("each mutating route's success adds exactly one audit row, written by the change's own transaction, whose actor is the token's user and whose version is the new tenant version for flag writes and empty for member, SDK key and personal data changes", async () => {
+  it("each mutation writes exactly one audit row, in its transaction, as the token's user", async () => {
     for (const mutation of mutations()) {
       // eslint-disable-next-line no-await-in-loop -- each mutation starts from the seeded rows
       await env.world.seed(env.admin);
@@ -252,7 +252,7 @@ describe('audit log', () => {
     expect(JSON.stringify(await auditOfA())).not.toContain(key);
   });
 
-  it('a failure after the change and its audit row are written leaves neither, for every mutating route, and the same requests succeed once the failure is gone', async () => {
+  it('a failure after the audit row rolls back the row and the change', async () => {
     const { relations } = await reachableRelations(env.admin, 'rff_app');
     const rowsOfA = () =>
       visibleRowSums(
@@ -296,7 +296,7 @@ describe('audit log', () => {
     expect(statuses).toEqual([204, 201, 200, 200, 200, 201]);
   });
 
-  it("rff_app's UPDATE and DELETE on audit_log are refused, in its own tenant's context too, and the rows stay", async () => {
+  it("rff_app cannot UPDATE or DELETE audit rows, its own tenant's included", async () => {
     await env.world.seed(env.admin);
     const before = await auditOfA();
     const pool = createPool(

@@ -43,7 +43,7 @@ function changedAt(value: string, index: number): string {
 }
 
 describe('session cookie', () => {
-  it('a sealed session opens to the same session, it and a sealed sign-in flow are encrypted JWTs whose decoded segments show nothing they hold, and its cookie is httpOnly, SameSite=Lax, path / and expires with the access token', async () => {
+  it('a sealed session reopens unchanged and shows nothing decoded', async () => {
     const value = await sealSession(session, SESSION_SECRET, NOW);
     expect(await openSession(value, SESSION_SECRET, NOW)).toEqual(session);
     // Encrypted: neither the token, nor a part of it, nor a claim shows in the value or
@@ -71,7 +71,7 @@ describe('session cookie', () => {
     expect(sessionCookie(value, session, true, NOW).secure).toBe(true);
   });
 
-  it('a session cookie with any one character changed, sealed with another secret, or sealed as a sign-in flow does not open', async () => {
+  it('a changed, foreign-keyed or flow cookie does not open as a session', async () => {
     const value = await sealSession(session, SESSION_SECRET, NOW);
     let changed = 0;
     for (let index = 0; index < value.length; index += 1) {
@@ -101,7 +101,7 @@ describe('session cookie', () => {
     });
   });
 
-  it('a session does not open once its access token has expired, and a sign-in flow not after 10 minutes', async () => {
+  it('a session expires with its token and a sign-in flow after 10 minutes', async () => {
     const value = await sealSession(session, SESSION_SECRET, NOW);
     expect(await openSession(value, SESSION_SECRET, at(3599))).toEqual(session);
     expect(await openSession(value, SESSION_SECRET, at(3600))).toBeNull();

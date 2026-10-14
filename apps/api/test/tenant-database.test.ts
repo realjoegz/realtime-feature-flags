@@ -77,7 +77,7 @@ async function slow(client: TenantClient): Promise<void> {
 }
 
 describe('withTenant', () => {
-  it('runs fn in one transaction on one connection with app.tenant_id and app.user_id set, and commits it', async () => {
+  it('runs fn in one transaction on one connection with both settings, and commits', async () => {
     await withPool(1, async (db, pool) => {
       const wanted = scope();
       const seen = await db.withTenant(wanted, async (client) => {
@@ -97,7 +97,7 @@ describe('withTenant', () => {
     });
   });
 
-  it('withUser runs fn in one transaction with app.user_id set and app.tenant_id empty, and the reused connection reads neither afterwards', async () => {
+  it('withUser sets app.user_id and an empty app.tenant_id, for one transaction', async () => {
     await withPool(1, async (db, pool) => {
       const userId = randomUUID();
       const inside = await db.withUser(userId, async (client) => {
@@ -113,7 +113,7 @@ describe('withTenant', () => {
     });
   });
 
-  it('the settings end with the transaction: the reused connection reads none after a COMMIT or a ROLLBACK', async () => {
+  it('the settings end with the transaction, after COMMIT and after ROLLBACK', async () => {
     await withPool(1, async (db, pool) => {
       const inside = await db.withTenant(scope(), async (client) => {
         return (await client.query<Session>(SESSION)).rows[0] as Session;
@@ -138,7 +138,7 @@ describe('withTenant', () => {
     });
   });
 
-  it('control: a session-level set_config survives COMMIT and reaches the next use of the connection', async () => {
+  it('control: a session-level set_config survives COMMIT into the next use', async () => {
     await withPool(1, async (db, pool) => {
       const tenantId = randomUUID();
       await db.withTenant(scope(), async (client) => {
@@ -149,7 +149,7 @@ describe('withTenant', () => {
     });
   });
 
-  it('rolls back and rethrows when fn throws or a statement fails, and returns the connection to the pool', async () => {
+  it('rolls back and rethrows on any error, and returns the connection', async () => {
     await withPool(1, async (db, pool) => {
       let xid = '';
       let pid = 0;
@@ -177,7 +177,7 @@ describe('withTenant', () => {
     });
   });
 
-  it('rejects when fn catches a failed statement and returns, because COMMIT then rolled the transaction back', async () => {
+  it('rejects when fn swallows a failed statement, as COMMIT then rolls back', async () => {
     await withPool(1, async (db, pool) => {
       let xid = '';
       await expect(
@@ -192,7 +192,7 @@ describe('withTenant', () => {
     });
   });
 
-  it('discards a connection that dies inside fn, and the next call gets a new one', async () => {
+  it('discards a connection that dies inside fn', async () => {
     await withPool(1, async (db, pool) => {
       let pid = 0;
       const admin = await adminClient();
@@ -215,7 +215,7 @@ describe('withTenant', () => {
     });
   });
 
-  it("refuses a query that fn sends after it has returned or thrown, so the query never runs in the next caller's transaction", async () => {
+  it('refuses a query fn sends after it settles', async () => {
     await withPool(1, async (db) => {
       // Each late query waits for a gate and then runs on fn's client, as a query that
       // fn forgot to await would. The gate opens inside the next call on the same
@@ -246,7 +246,7 @@ describe('withTenant', () => {
     });
   });
 
-  it('rejects a tenant id or user id that is not a UUID before taking a connection', async () => {
+  it('rejects non-UUID ids before taking a connection', async () => {
     await withPool(1, async (db, pool) => {
       await expect(db.withTenant({ tenantId: '', userId: null }, nothing)).rejects.toThrow(
         'withTenant: tenantId is not a UUID',
@@ -316,7 +316,7 @@ describe('withUserAcrossTenants', () => {
     }
   }
 
-  it("runs each step in fn's transaction with app.tenant_id set to one of the user's tenants and back to '' after it, and refuses a tenant the user is not a member of", async () => {
+  it("runs each step in one of the user's tenants, in one transaction", async () => {
     const { shared, aEditor } = fixture.users;
     const { tenantA: A, tenantB: B } = fixture;
     await onDatabase(async (db) => {
@@ -349,7 +349,7 @@ describe('withUserAcrossTenants', () => {
     });
   });
 
-  it('rolls the whole transaction back when a step throws, also when fn catches the error and returns, and runs one step at a time', async () => {
+  it('rolls everything back when a step throws, even if fn catches it', async () => {
     const { shared } = fixture.users;
     const { tenantA: A, tenantB: B } = fixture;
     const before = await flagsOfA();
@@ -378,7 +378,7 @@ describe('withUserAcrossTenants', () => {
   });
 });
 
-describe('look-ups before the tenant is known', () => {
+describe('pre-tenant look-ups', () => {
   let fixture: Fixture;
   let appUrl: string;
 
@@ -399,7 +399,7 @@ describe('look-ups before the tenant is known', () => {
     await pool?.end();
   });
 
-  it('the helper finds the user by issuer and subject, the member role and the tenant of an unrevoked SDK key, and returns null otherwise', async () => {
+  it("the helper finds a user, a role and a key's tenant, else null", async () => {
     pool = createPool({ url: appUrl, poolMax: 2, connectDeadlineMs: 0 }, silent);
     const db = new TenantDatabase(pool);
     const { shared, nobody } = fixture.users;

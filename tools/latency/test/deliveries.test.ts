@@ -11,7 +11,7 @@ const coloured = (message: string) =>
 const plain = (message: string) => `[Nest] 7  - 10/14/2026, 4:22:35 PM     LOG [Stream] ${message}`;
 
 describe('replica logs', () => {
-  it("counts, for one tenant, the snapshots logged as sent after a connect, ready or poll wake-up, with or without colour codes, and ignores other tenants' lines and other lines", () => {
+  it("counts one tenant's snapshots logged after a connect, ready or poll wake-up", () => {
     const log = [
       plain(`sent version 3 of tenant ${ACME} to 25 streams after a connect wake-up`),
       coloured(`sent version 3 of tenant ${ACME} to 1 stream after a connect wake-up`),

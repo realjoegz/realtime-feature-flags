@@ -48,7 +48,7 @@ function staticUsers(yaml: string): { email: string; name: string; dexUserId: st
 }
 
 describe('demo seed', () => {
-  it('dexSubject gives the subject of a real Dex v2.46.0 token for a static user', () => {
+  it('dexSubject gives the subject of a real Dex token', () => {
     // The "sub" of an access token that Dex v2.46.0 issued for the static user with
     // this userID, signed in through the password database (connector "local").
     expect(dexSubject('7d1c2b0e-5f43-4e1a-9a55-0c6d1f0a1001')).toBe(
@@ -61,7 +61,7 @@ describe('demo seed', () => {
     expect(dexSubject('a')).toMatch(/^[A-Za-z0-9_-]+$/);
   });
 
-  it('the seeded users are exactly the static users of the Dex configuration, and compose gives Dex, the API and the seed one issuer', async () => {
+  it("the seeded users are exactly Dex's static users, and all parts share one issuer", async () => {
     const yaml = await readFile(DEX_CONFIG, 'utf8');
     const fromDex = staticUsers(yaml);
     expect(fromDex).toHaveLength(DEMO_USERS.length);
@@ -90,7 +90,7 @@ describe('demo seed', () => {
       await admin?.end();
     });
 
-    it('creates the demo data once: a second run changes no row, and a user who erased itself stays erased and is not added back to a tenant seeded again', async () => {
+    it('runs once and keeps erased users erased', async () => {
       const first = await seedDemo(admin, { issuer: ISSUER });
       expect(first).toEqual({
         usersCreated: 4,
@@ -179,7 +179,7 @@ describe('demo seed', () => {
       await idp?.close();
     });
 
-    it("a token with the subject Dex gives a seeded user signs in as that user with the seeded roles, and each seeded SDK key opens its own tenant's stream", async () => {
+    it("seeded users sign in with their roles, and seeded keys open their tenant's stream", async () => {
       const bob = DEMO_USERS.find((user) => user.email === 'bob@example.test')!;
       const token = await idp.token(dexSubject(bob.dexUserId));
       const me = await request(api.base, { method: 'GET', path: '/me' }, `Bearer ${token}`);

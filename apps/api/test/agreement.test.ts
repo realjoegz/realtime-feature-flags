@@ -334,9 +334,9 @@ function rewrittenRows(rewrite: (row: Record<string, unknown>) => void): AppChan
   return [{ override }, { override }];
 }
 
-describe('agreement between the SDK and POST /evaluate', () => {
+describe('agreement', () => {
   it(
-    `random flag sets saved through the API reach an SDK client as saved, and its evaluate() agrees with POST /evaluate on the other app at the same version ${label(AGREEMENT)}`,
+    `saved flags reach the SDK unchanged and its evaluate() matches POST /evaluate on the other app ${label(AGREEMENT)}`,
     { timeout: 300_000 },
     async () => {
       const env = await startEnvironment('agreement', [{}, {}]);
@@ -364,7 +364,7 @@ describe('agreement between the SDK and POST /evaluate', () => {
   );
 
   it(
-    `control: storage that loses the order of the rules fails the check that the SDK holds the flags as saved ${label(AGREEMENT)}`,
+    `control: storage that loses rule order fails ${label(AGREEMENT)}`,
     { timeout: 300_000 },
     async () => {
       const message = await failureOf(
@@ -378,7 +378,7 @@ describe('agreement between the SDK and POST /evaluate', () => {
   );
 
   it(
-    `control: storage that returns the percentage as a string fails, because the SDK refuses the snapshot ${label(AGREEMENT)}`,
+    `control: a percentage stored as a string fails ${label(AGREEMENT)}`,
     { timeout: 300_000 },
     async () => {
       const message = await failureOf(
@@ -394,7 +394,7 @@ describe('agreement between the SDK and POST /evaluate', () => {
   );
 
   it(
-    `control: a second app that evaluates from a stale cache entry, one per tenant that a change never replaces, fails the comparison with the SDK ${label(AGREEMENT)}`,
+    `control: evaluating from a stale cache entry fails ${label(AGREEMENT)}`,
     { timeout: 300_000 },
     async () => {
       const message = await failureOf('agreestale', [

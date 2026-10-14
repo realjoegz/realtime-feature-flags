@@ -6,14 +6,14 @@ A multi-tenant feature flag service in TypeScript on Node 24.13.0: a NestJS 12.1
 
 ## Proofs
 
-Four rows, cut to their main claims. [docs/evidence.md](docs/evidence.md) has all 63 and, before each table, says how its tests force their cases.
+Four rows, cut to their main claims. [docs/evidence.md](docs/evidence.md) has all 58 and, before each table, says how its tests force their cases.
 
 | Proof | Proven behaviour | Test |
 |---|---|---|
 | Rollout | Raising the percentage only adds users; lowering and raising it again restores the same users | [P2 raising the percentage only adds users (seed 20261014, 1000 runs)](packages/core/test/rollout.test.ts), [P4 lowering then raising the percentage restores the same users (seed 20261014, 500 runs)](packages/core/test/rollout.test.ts) |
-| Isolation | Acting for tenant B, the API's database role reads only B's rows in every table; on every route under `/tenants/:tenantId`, a member of B sending A's request gets the reply for something that does not exist | [tenant isolation in the tables in B's context rff_app reads exactly B's rows from every table](apps/api/test/isolation-tables.test.ts), [tenant isolation at the routes each case: a member of A succeeds in A, and a member of B making the same request is refused exactly as for a tenant or resource that does not exist](apps/api/test/isolation-routes.test.ts) |
-| Convergence | With every Redis notification lost, SDK clients moving between two API instances in one test process end on the database's flags and version, applying only increasing versions | [convergence on two instances every notification lost: 4 SDK clients moving between two apps end on the database's flags and version and apply strictly increasing versions (seed 20261014, 20 runs of up to 24 steps)](apps/api/test/convergence.test.ts) |
-| Agreement | Random flags saved through the API reach an SDK client as saved, and its `evaluate()` agrees with `POST /evaluate` on the other instance. Both run `@rff/core`, so this proves the data path | [agreement between the SDK and POST /evaluate random flag sets saved through the API reach an SDK client as saved, and its evaluate() agrees with POST /evaluate on the other app at the same version (seed 20261014, 100 runs)](apps/api/test/agreement.test.ts) |
+| Isolation | Acting for tenant B, the API's database role reads only B's rows in every table; on every route under `/tenants/:tenantId`, a member of B sending A's request gets the reply for something that does not exist | [table isolation in B's context rff_app reads exactly B's rows from every table](apps/api/test/isolation-tables.test.ts), [route isolation each case succeeds in A and gets B the reply for something missing](apps/api/test/isolation-routes.test.ts) |
+| Convergence | With every Redis notification lost, SDK clients moving between two API instances in one test process end on the database's flags and version, applying only increasing versions | [convergence notifications lost: 4 clients converge with strictly increasing versions (seed 20261014, 20 runs of up to 24 steps)](apps/api/test/convergence.test.ts) |
+| Agreement | Random flags saved through the API reach an SDK client as saved, and its `evaluate()` agrees with `POST /evaluate` on the other instance. Both run `@rff/core`, so this proves the data path | [agreement saved flags reach the SDK unchanged and its evaluate() matches POST /evaluate on the other app (seed 20261014, 100 runs)](apps/api/test/agreement.test.ts) |
 
 ## Run it locally
 

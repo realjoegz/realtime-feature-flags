@@ -102,8 +102,8 @@ async function pairChecks(target: Environment): Promise<{
   return { findings, replies, aStatuses };
 }
 
-describe('tenant isolation at the routes', () => {
-  it("the routes the app's HTTP router serves are exactly the case table plus the public allow-list, GET /health", () => {
+describe('route isolation', () => {
+  it("the router's routes are exactly the case table plus GET /health", () => {
     const served = servedRoutes(env.api.app);
     expect(
       describeFindings(
@@ -118,7 +118,7 @@ describe('tenant isolation at the routes', () => {
     expect(served).toHaveLength(15);
   });
 
-  it('each case: a member of A succeeds in A, and a member of B making the same request is refused exactly as for a tenant or resource that does not exist', async () => {
+  it('each case succeeds in A and gets B the reply for something missing', async () => {
     const { findings, aStatuses } = await pairChecks(env);
     expect(describeFindings(findings)).toEqual([]);
     expect(aStatuses).toEqual(
@@ -126,7 +126,7 @@ describe('tenant isolation at the routes', () => {
     );
   });
 
-  it("requests by members of B and by a user in no tenant change none of A's rows, xmin included, and no reply to them holds a canary of A", async () => {
+  it("requests from outside A change none of A's rows and show no canary", async () => {
     const { fixture, people } = env.world;
     await env.world.seed(env.admin);
     const before = await rowsOfA();
@@ -172,7 +172,7 @@ describe('tenant isolation at the routes', () => {
     expect(canaryReplyFindings([{ route: 'A', reply: own }], fixture.canaries)).not.toEqual([]);
   });
 
-  it("the shared user, owner in A and viewer in B, reads B's flags, members and audit with no canary of A, and GET /me gives each user only its own tenants", async () => {
+  it('the shared user reads B with no canary of A', async () => {
     const { fixture, people } = env.world;
     await env.world.seed(env.admin);
     const replies = await inSequence(['/flags', '/members', '/audit'], async (rest) => {
@@ -212,7 +212,7 @@ describe('tenant isolation at the routes', () => {
     expect(await tenantsOf(people.outsider)).toEqual({ id: people.outsider.id, memberships: [] });
   });
 
-  it('role matrix: every route for no token, a user in no tenant, and a viewer, an editor and the owner of A', async () => {
+  it("role matrix: every route for no token, an outsider and A's three roles", async () => {
     const { fixture } = env.world;
     const routes = [
       ...ROUTE_CASES.map((routeCase) => ({
@@ -254,7 +254,7 @@ describe('tenant isolation at the routes', () => {
     expect(cells).toHaveLength(15 * 5);
   });
 
-  it("the SDK stream: A's key receives A's snapshot as the database holds it, B's key receives B's with no canary of A, and A's revoked key, an unknown key, a key one character short, A's key without the Bearer scheme and the token of A's owner get the same 401 as no key", async () => {
+  it('the SDK stream: each key gets its own tenant, and bad keys the 401 of no key', async () => {
     await env.world.seed(env.admin);
     const before = await rowsOfA();
     const { findings, repliesToOthers, ownText } = await streamFindings(env);
@@ -270,7 +270,7 @@ describe('tenant isolation at the routes', () => {
     expect([...(await rowsOfA())]).toEqual([...before]);
   });
 
-  it("the SDK stream: a change in A reaches A's open streams and none of B's, and the next event on B's stream is B's own change", async () => {
+  it("the SDK stream: A's change reaches only A's streams, and B's next event is B's own change", async () => {
     const { fixture, people } = env.world;
     await env.world.seed(env.admin);
     const ofA = await openStream(env.api.base, {
@@ -312,7 +312,7 @@ describe('tenant isolation at the routes', () => {
     }
   });
 
-  it("control: an app whose SDK key look-up gives A's tenant for every key is reported by the stream check, which finds A's snapshot on B's key, a stream for A's revoked key and for an unknown key, and A's canaries in what they received", async () => {
+  it('control: an SDK key look-up that always gives A is reported', async () => {
     const leaky = await startEnvironment('isokeys', {
       override: (builder, world) =>
         builder.overrideProvider(TenantDatabase).useFactory({
@@ -342,7 +342,7 @@ describe('tenant isolation at the routes', () => {
     }
   });
 
-  it('control: an app with one route that has no case, and a case for a route the app does not serve, are reported', async () => {
+  it('control: a route without a case and the reverse are reported', async () => {
     const extra = await startEnvironment('isoextra', { controllers: [ExtraController] });
     try {
       const removed = { ...tenantCases[0]!, route: 'GET /tenants/:tenantId/removed' };
@@ -363,7 +363,7 @@ describe('tenant isolation at the routes', () => {
     }
   });
 
-  it("control: an app whose membership look-up ignores the path's tenant is reported by every pair, by A's checksum and by the canary check", async () => {
+  it("control: a membership look-up that ignores the path's tenant is reported", async () => {
     const leaky = await startEnvironment('isoleaky', {
       override: (builder) =>
         builder
@@ -398,7 +398,7 @@ describe('tenant isolation at the routes', () => {
     }
   });
 
-  it('control: an app that answers a flag missing from the tenant with a 404 of its own is reported by the pair check, which compares whole replies and not only statuses', async () => {
+  it('control: a 404 of its own for a foreign flag is reported', async () => {
     const oracle = await startEnvironment('isooracle', {
       override: (builder) =>
         builder.overrideProvider(FlagsService).useFactory({

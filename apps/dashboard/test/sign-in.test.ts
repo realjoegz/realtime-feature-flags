@@ -81,7 +81,7 @@ async function expectRefused(response: Response, reason: string): Promise<void> 
 }
 
 describe('sign-in', () => {
-  it('the login route sends the browser to the provider with an S256 code challenge and keeps state, nonce and verifier in an encrypted httpOnly cookie; the callback sets an httpOnly SameSite=Lax session cookie holding the access token, which no header or body shows', async () => {
+  it('the code flow ends with the token in the session cookie only', async () => {
     const { authorizationUrl, flow } = await startSignIn();
     const url = new URL(authorizationUrl);
     expect(url.origin + url.pathname).toBe(`${provider.issuer}/auth`);
@@ -139,7 +139,7 @@ describe('sign-in', () => {
     expect(await response.text()).not.toContain(accessToken.split('.')[1]);
   });
 
-  it('the callback refuses a response whose state is wrong or missing, before the code reaches the provider', async () => {
+  it('the callback refuses a wrong or missing state', async () => {
     for (const state of ['wrong-state', null]) {
       // eslint-disable-next-line no-await-in-loop -- one sign-in at a time
       const { authorizationUrl, flow } = await startSignIn();
@@ -153,7 +153,7 @@ describe('sign-in', () => {
     }
   });
 
-  it('the callback refuses an ID token whose nonce is not the one the sign-in sent', async () => {
+  it('the callback refuses another nonce', async () => {
     const { authorizationUrl, flow } = await startSignIn();
     const url = provider.authorize(authorizationUrl, { nonce: 'another-nonce' });
     const before = provider.tokenRequests;
@@ -162,7 +162,7 @@ describe('sign-in', () => {
     expect(provider.tokenRequests).toBe(before + 1);
   });
 
-  it('the callback refuses a sign-in without its code verifier: no flow cookie, or one that holds no verifier, and the code never reaches the provider', async () => {
+  it('the callback refuses a sign-in with no code verifier', async () => {
     const { authorizationUrl, flow } = await startSignIn();
     const url = provider.authorize(authorizationUrl);
     const params = new URL(authorizationUrl).searchParams;
@@ -178,7 +178,7 @@ describe('sign-in', () => {
     expect((await callback(callbackRequest(url, flow.value))).status).toBe(303);
   });
 
-  it("sign-out from the dashboard's origin deletes the session cookie; with no Origin or another site's it answers 403 and sets no cookie", () => {
+  it('sign-out works only from the dashboard origin', () => {
     const response = logout(logoutRequest(new URL(REDIRECT_URI).origin));
     expect(response.status).toBe(303);
     expect(response.headers.get('location')).toBe('http://127.0.0.1:3100/signed-out');

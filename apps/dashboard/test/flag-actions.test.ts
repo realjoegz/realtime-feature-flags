@@ -105,7 +105,7 @@ function form(tenantId: string, fields: { enabled?: boolean; percent?: string } 
 }
 
 describe('flag server action', () => {
-  it('saveFlag refuses a viewer, and a tenant the user is not in with the answer for a tenant that does not exist, and sends no flag request', async () => {
+  it('saveFlag refuses a viewer and a foreign tenant', async () => {
     await signInAs('token-of-viewer');
     expect(await saveFlag(null, form(ACME))).toEqual({
       ok: false,
@@ -126,7 +126,7 @@ describe('flag server action', () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
-  it("saveFlag as an editor sends the new enabled and rollout with the flag's rules unchanged, as the signed-in user, and renders the page again", async () => {
+  it('saveFlag for an editor changes only enabled and the rollout', async () => {
     await signInAs('token-of-editor');
     expect(await saveFlag(null, form(ACME, { enabled: true, percent: '25.5' }))).toEqual({
       ok: true,

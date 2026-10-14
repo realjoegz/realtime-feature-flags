@@ -42,7 +42,7 @@ const versionsOf = (stream: OpenStream): string[] =>
   stream.events.map((event) => event.lastEventId);
 
 describe('GET /sdk/stream', () => {
-  it("without a cursor sends the tenant's snapshot at once as one event whose id is the version, whose event is snapshot and whose data is the tenant id, version and flags as the database holds them", async () => {
+  it('without a cursor sends the snapshot at once', async () => {
     await env.world.seed(env.admin);
     const stream = await openStream(env.api.base, { authorization: keyOfA });
     try {
@@ -62,7 +62,7 @@ describe('GET /sdk/stream', () => {
     }
   });
 
-  it('with a cursor at the tenant version sends heartbeats and no data until the next change, whose snapshot comes next; a lower cursor gets the snapshot at once; Last-Event-ID takes precedence over ?cursor=', async () => {
+  it('a current cursor waits for the next change, and a lower one does not', async () => {
     await env.world.seed(env.admin);
     const open = (lastEventId: string | undefined, query?: string) =>
       openStream(env.api.base, {
@@ -120,7 +120,7 @@ describe('GET /sdk/stream', () => {
     }
   });
 
-  it('heartbeats are comment frames ": hb" with no id, no more than one per interval, and every other frame is a snapshot event', async () => {
+  it('heartbeats are comments with no id, at most one per interval', async () => {
     await env.world.seed(env.admin);
     const stream = await openStream(env.api.base, { authorization: keyOfA });
     try {
@@ -143,7 +143,7 @@ describe('GET /sdk/stream', () => {
     }
   });
 
-  it('a cursor that is not a version gets 400 before any stream opens, and so does a repeated cursor parameter', async () => {
+  it('a non-version or repeated cursor gets 400 before any stream opens', async () => {
     const cases: [string | undefined, string | undefined][] = [
       ['abc', undefined],
       ['-1', undefined],
@@ -177,7 +177,7 @@ describe('GET /sdk/stream', () => {
 });
 
 describe('stream fan-out', () => {
-  it('open streams hold no pooled connection: 12 streams on a pool of 2 each get their snapshot and the latest change, and between reads every pooled connection is idle', async () => {
+  it('open streams hold no pooled connection', async () => {
     const small = await startEnvironment('streampool', {
       configure: (config) => ({ ...config, database: { ...config.database, poolMax: 2 } }),
     });
@@ -226,7 +226,7 @@ describe('stream fan-out', () => {
     }
   });
 
-  it('a wake-up that arrives during a read causes exactly one more read, however many arrive; a wake-up for a tenant with no open stream reads nothing', async () => {
+  it('wake-ups during a read cause exactly one more read', async () => {
     const reader = new GatedReader();
     const hub = new StreamHub(hubConfig, reader);
     const events: MessageEvent[] = [];
@@ -274,7 +274,7 @@ describe('stream fan-out', () => {
     subscription.unsubscribe();
   });
 
-  it('a snapshot sent after a wake-up other than a notification is logged with its version, tenant, number of streams and cause, one sent after a notification is not, and a read that several wake-ups asked for counts under the latest', async () => {
+  it('only snapshots not asked for by a notification are logged', async () => {
     const reader = new GatedReader();
     const hub = new StreamHub(hubConfig, reader);
     const { logger } = hub as unknown as { logger: Logger };
@@ -320,7 +320,7 @@ describe('stream fan-out', () => {
     third.unsubscribe();
   });
 
-  it('close() completes every open stream while heartbeats flow, each client sees the end of the body and no reset, and close() returns within 1 s', async () => {
+  it('close() ends every open stream cleanly within 1 s', async () => {
     // A heartbeat every 10 ms keeps bytes in flight on every stream when close()
     // starts, so a shutdown that destroys the sockets before the ends are written
     // shows as failed bodies.

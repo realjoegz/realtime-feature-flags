@@ -54,11 +54,11 @@ const COMMON = [
 ] as const;
 
 // The titles are short; docs/evidence.md states in full what each run checks.
-const CLAIM = "end on the database's flags and version and apply strictly increasing versions";
+const CLAIM = 'converge with strictly increasing versions';
 
-describe('convergence on two instances', () => {
+describe('convergence', () => {
   it(
-    `safety poll off: ${CLIENTS} SDK clients moving between two apps ${CLAIM} ${SIMULATION_LABEL}`,
+    `poll off: ${CLIENTS} clients ${CLAIM} ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const tally = await simulate('convnopoll', {
@@ -76,7 +76,7 @@ describe('convergence on two instances', () => {
   );
 
   it(
-    `every notification lost: ${CLIENTS} SDK clients moving between two apps ${CLAIM} ${SIMULATION_LABEL}`,
+    `notifications lost: ${CLIENTS} clients ${CLAIM} ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const tally = await simulate('convdropped', {
@@ -95,7 +95,7 @@ describe('convergence on two instances', () => {
   );
 
   it(
-    `poll and notifications on, with lost notifications, failing publishes and subscriber resets: ${CLIENTS} SDK clients moving between two apps ${CLAIM} ${SIMULATION_LABEL}`,
+    `both on, with bus faults: ${CLIENTS} clients ${CLAIM} ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const tally = await simulate('convfaulty', {

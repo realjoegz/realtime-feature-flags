@@ -54,7 +54,7 @@ function start(server: FakeStreamServer, options: Partial<FlagsClientOptions> = 
 const VERSION_RULE = runParams(200);
 
 describe('SDK client', () => {
-  it(`applies a snapshot only when its version is greater than the one it holds, over reconnects too, and calls onChange once for each one it applies ${label(VERSION_RULE)}`, async () => {
+  it(`applies only versions above the one it holds ${label(VERSION_RULE)}`, async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.array(fc.array(fc.nat(30), { maxLength: 8 }), { minLength: 1, maxLength: 4 }),
@@ -89,7 +89,7 @@ describe('SDK client', () => {
     );
   });
 
-  it('applies no invalid snapshot and reports each: not JSON, a flag that validateFlag refuses, a duplicate key, an id other than the version, another tenant', async () => {
+  it('applies no invalid snapshot of five kinds and reports each', async () => {
     const server = new FakeStreamServer();
     const { client, applied, errors } = start(server);
     const connection = await server.connection(0);
@@ -117,7 +117,7 @@ describe('SDK client', () => {
     expect(errors.every((error) => error instanceof SnapshotError)).toBe(true);
   });
 
-  it('sends no Last-Event-ID on its first connection and the version it holds on each reconnect, after the server ends the stream and after the connection fails', async () => {
+  it('sends no Last-Event-ID first and its version on each reconnect', async () => {
     const server = new FakeStreamServer();
     const { client, errors } = start(server);
     const first = await server.connection(0);
@@ -147,7 +147,7 @@ describe('SDK client', () => {
     expect(third.headers.get('last-event-id')).toBe('7');
   });
 
-  it('a connection that delivers no bytes for three heartbeat intervals is aborted and replaced, while heartbeats alone keep a connection open', async () => {
+  it('a connection silent for three heartbeat intervals is replaced', async () => {
     const server = new FakeStreamServer();
     const heartbeatIntervalMs = 100;
     const { client, errors } = start(server, { heartbeatIntervalMs });
@@ -175,7 +175,7 @@ describe('SDK client', () => {
     expect(client.version).toBe(1);
   });
 
-  it('reconnects with capped exponential backoff and jitter after refused connections and 503, and resets the backoff once a connection opens', async () => {
+  it('reconnects with capped exponential backoff and jitter', async () => {
     const server = new FakeStreamServer();
     const refused = { networkError: new TypeError('fetch failed') };
     server.answer(refused, refused, { status: 503 }, refused, refused);
@@ -215,7 +215,7 @@ describe('SDK client', () => {
     expect(performance.now() - endedAt).toBeLessThan(120);
   });
 
-  it(`the wait before reconnect attempt n is c * (1 + r) / 2 for the ceiling c = min(maxMs, initialMs * 2^n) and the random draw r, between half and all of c ${label(VERSION_RULE)}`, () => {
+  it(`the wait before attempt n is c * (1 + r) / 2 for c = min(maxMs, initialMs * 2^n) ${label(VERSION_RULE)}`, () => {
     fc.assert(
       fc.property(
         fc.nat(80),
@@ -239,7 +239,7 @@ describe('SDK client', () => {
     expect(DEFAULT_RECONNECT).toEqual({ initialMs: 1000, maxMs: 30_000 });
   });
 
-  it('stops after 401, which a retry cannot change, and reports it', async () => {
+  it('stops after 401 and reports it', async () => {
     const server = new FakeStreamServer();
     server.answer({ status: 401 });
     const { errors } = start(server);
@@ -250,7 +250,7 @@ describe('SDK client', () => {
     expect(errors[0]).toMatchObject({ status: 401, fatal: true });
   });
 
-  it('close() aborts the connection and stops reconnecting, and no listener runs afterwards', async () => {
+  it('close() aborts the connection and stops reconnecting', async () => {
     const server = new FakeStreamServer();
     const { client, applied } = start(server);
     const connection = await server.connection(0);
@@ -280,7 +280,7 @@ function fieldsOf(result: unknown): unknown[] {
 }
 
 describe('SDK evaluation', () => {
-  it('evaluate() over snapshots received from the stream gives the expected value, reason, rule index and bucket for all 551 conformance cases, and undefined for a flag it does not hold', async () => {
+  it('evaluate() over streamed snapshots gives all 551 conformance results', async () => {
     const cases = JSON.parse(
       readFileSync(new URL(import.meta.resolve('@rff/core/conformance.json')), 'utf8'),
     ) as ConformanceCase[];

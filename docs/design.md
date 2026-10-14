@@ -10,7 +10,7 @@ A tenant is a team. Its members manage boolean flags in a dashboard, and applica
 - **A connected client ends on the latest flags.** An SDK client applies a snapshot only when its version is above the one it holds, so its version never goes back. Each snapshot holds all of the tenant's flags at one version, so a client that missed versions needs only the next one, and it can skip versions: there is no ordered change log.
 - **Tenants cannot read each other's rows.** The API reads and writes as a database role that row-level security applies to, inside a transaction set to the tenant of the request. A request for another tenant's resource gets the same answer as a request for one that does not exist. The audit ids come from one sequence that all tenants share, so the gaps between a tenant's ids show how many rows other tenants wrote ([section 14](#14-limits)).
 
-How fast a change arrives is not promised. [evidence.md](evidence.md#13-latency) has what was measured on one laptop.
+How fast a change arrives is not promised. [evidence.md](evidence.md#13-latency) has how it was measured on one laptop.
 
 ## 2. Components and stack
 

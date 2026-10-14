@@ -103,12 +103,12 @@ function configFor(url: string): Config {
   return { ...config, database: { ...config.database, poolMax: 2 } };
 }
 
-describe('start-up refuses a privileged database role', () => {
-  it('rff_app on a migrated database has no privilege that skips row-level security', async () => {
+describe('role check', () => {
+  it('rff_app on a migrated database passes', async () => {
     expect(await reportFor(harness().appUrl)).toEqual({ role: 'rff_app', problems: [] });
   });
 
-  it('a plain login role on the same scratch database has none either', async () => {
+  it('a plain login role passes', async () => {
     expect(await reportFor(scratch.urlFor(plain))).toEqual({ role: plain.name, problems: [] });
   });
 
@@ -128,7 +128,7 @@ describe('start-up refuses a privileged database role', () => {
     ]);
   });
 
-  it('a member of a role that owns a table or the database is refused', async () => {
+  it('a member of a table or database owner is refused', async () => {
     expect((await reportFor(scratch.urlFor(ownerMember))).problems).toEqual([
       'owns tables, views or sequences public.owned_table',
     ]);
@@ -150,7 +150,7 @@ describe('start-up refuses a privileged database role', () => {
     ]);
   });
 
-  it('a role that owns a partitioned table, a view, a materialized view or a sequence is refused', async () => {
+  it('a role that owns a view, matview, sequence or partitioned table is refused', async () => {
     const reports = await Promise.all(
       relationOwners.map((role) => reportFor(scratch.urlFor(role))),
     );
@@ -159,7 +159,7 @@ describe('start-up refuses a privileged database role', () => {
     );
   });
 
-  it('a temporary table that the role holds in another session does not block start-up', async () => {
+  it('a temporary table in another session does not count', async () => {
     const holder = await connectClient(scratch.urlFor(temporaryHolder), 'rff-test-rolecheck');
     try {
       await holder.query('CREATE TEMPORARY TABLE held (id integer)');
@@ -187,7 +187,7 @@ describe('start-up refuses a privileged database role', () => {
     ]);
   });
 
-  it('createApp rejects a superuser, a BYPASSRLS role, a table owner and a member of a superuser role, and starts as rff_app', async () => {
+  it('createApp refuses four privileged roles and starts as rff_app', async () => {
     const urls = [
       scratch.adminUrl,
       scratch.urlFor(bypass),

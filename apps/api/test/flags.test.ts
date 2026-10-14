@@ -74,7 +74,7 @@ const newFlag = (key: string, rolloutBasisPoints = 0, rules: Rule[] = []) => ({
 });
 
 describe('flags', () => {
-  it('POST generates a salt of 16 hex digits on the server and refuses one in the body; PUT keeps the key and the salt and refuses either in the body', async () => {
+  it('the server sets a 16-hex-digit salt, refusing one in a POST body, and PUT keeps key and salt, refusing either', async () => {
     await env.world.seed(env.admin);
     const first = await asEditor({ method: 'POST', path: flagsPath, body: newFlag('salted-1') });
     const second = await asEditor({ method: 'POST', path: flagsPath, body: newFlag('salted-2') });
@@ -118,7 +118,7 @@ describe('flags', () => {
     expect(read.body).toEqual({ key: 'salted-1', salt: salt(first), ...settings });
   });
 
-  it('invalid flags in POST and PUT bodies and invalid contexts are refused with 400 and the errors of validateFlag and validateContext, and change nothing', async () => {
+  it('invalid flags and contexts get 400 and change nothing', async () => {
     await env.world.seed(env.admin);
     const version = await tenantVersion();
     const audit = await auditRows();
@@ -215,7 +215,7 @@ describe('flags', () => {
     expect(await auditRows()).toEqual(audit);
   });
 
-  it('a duplicate key gives 409, and a PUT or DELETE of a missing flag or a key that no flag can have gives 404, each leaving the version, the audit log and the notifier untouched', async () => {
+  it('a duplicate key gives 409 and a missing or impossible key 404, with no version, audit row or notification', async () => {
     await env.world.seed(env.admin);
     const version = await tenantVersion();
     const audit = await auditRows();
@@ -239,7 +239,7 @@ describe('flags', () => {
     expect(notifier.calls.length).toBe(calls);
   });
 
-  it('each flag write raises the version by one, its audit row carries the new version, and the notifier is called after COMMIT with that version, even when an earlier notification failed', async () => {
+  it('each write raises the version by one, audits it and notifies it after COMMIT, also after a failed notification', async () => {
     await env.world.seed(env.admin);
     const { tenantA } = env.world.fixture;
     const start = await tenantVersion();
@@ -296,7 +296,7 @@ describe('flags', () => {
     }
   });
 
-  it('concurrent writes in one tenant get consecutive versions, one each, and the flag ends as the write with the highest version left it', async () => {
+  it('concurrent writes get consecutive versions and the flag ends as the highest version left it', async () => {
     await env.world.seed(env.admin);
     const start = await tenantVersion();
     const writes = Array.from({ length: 12 }, (_, index) => index + 1);
@@ -325,7 +325,7 @@ describe('flags', () => {
 });
 
 describe('POST /evaluate', () => {
-  it("returns the tenant's version and, for every flag, what evaluate() gives for the flags of that version", async () => {
+  it("returns evaluate()'s results for the flags of the version it returns", async () => {
     await env.world.seed(env.admin);
     const evaluatePath = `/tenants/${env.world.fixture.tenantA}/evaluate`;
     const contexts = [
@@ -358,7 +358,7 @@ describe('POST /evaluate', () => {
     expect([...reasons].toSorted()).toEqual(['disabled', 'rollout', 'rule']);
   });
 
-  it('while writes run, every answer is the evaluation of the flags at the version it names', async () => {
+  it('during writes, each answer matches its version', async () => {
     await env.world.seed(env.admin);
     const { tenantA } = env.world.fixture;
     const start = await tenantVersion();
@@ -440,7 +440,7 @@ const percentages = fc
   .map(([a, b]): readonly [number, number] => (a <= b ? [a, b] : [b, a]));
 
 describe('rollout through the API', () => {
-  it(`raising only the percentage with PUT keeps every user who was in, with the same bucket, and the flag keeps its salt and its rules in their order ${label(ROLLOUT)}`, async () => {
+  it(`a PUT raising only the percentage keeps every user in, with bucket, salt and rule order ${label(ROLLOUT)}`, async () => {
     await env.world.seed(env.admin);
     const evaluatePath = `/tenants/${env.world.fixture.tenantA}/evaluate`;
     let run = 0;

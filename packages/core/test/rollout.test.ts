@@ -97,7 +97,7 @@ async function twoInstances(
   return [first.evaluate, second.evaluate];
 }
 
-it(`P1 a result depends only on the flag, the user key and the attributes the flag's rules read ${label(P1)}`, async () => {
+it(`P1 a result depends only on the flag, the user key and the attributes its rules read ${label(P1)}`, async () => {
   const [first, second] = await twoInstances(() => import('../src/index.ts'));
   expect(first).not.toBe(second);
   fc.assert(p1Property(first, second), P1);
@@ -139,7 +139,7 @@ it(`P1 a second Node process gives the same results ${label(PROCESS, 'cases')}`,
   expect(mismatchesAcrossProcesses(coreModule, evaluate)).toBe(0);
 });
 
-it(`P1 control: a per-process salt gives different results in a second process ${label(PROCESS, 'cases')}`, async () => {
+it(`P1 control: a per-process salt differs in a second process ${label(PROCESS, 'cases')}`, async () => {
   const control = (await import('./controls/per-instance-salt.ts')) as { evaluate: Evaluate };
   expect(mismatchesAcrossProcesses(perInstanceSaltModule, control.evaluate)).toBeGreaterThan(0);
 });
@@ -201,15 +201,15 @@ function p3BoundaryProperty(subject: Evaluate) {
   );
 }
 
-it(`P3 at 0 basis points no user is in by rollout and at 10000 every user is ${label(P3)}`, () => {
+it(`P3 by rollout, 0 basis points let nobody in and 10000 everybody ${label(P3)}`, () => {
   fc.assert(p3EndsProperty(evaluate), { ...P3, examples: ends });
 });
 
-it(`P3 a user is in exactly when its bucket is below the percentage, at bucket - 1, bucket and bucket + 1, buckets 0 and 9999 included ${label(P3)}`, () => {
+it(`P3 a user is in exactly when its bucket is below the percentage ${label(P3)}`, () => {
   fc.assert(p3BoundaryProperty(evaluate), { ...P3, examples: endsAtTheBoundary });
 });
 
-it(`P3 control: less-or-equal in place of less-than is falsified at 0 basis points and at the bucket ${label(P3)}`, () => {
+it(`P3 control: less-or-equal for less-than is falsified ${label(P3)}`, () => {
   expect(falsified(p3EndsProperty(lessOrEqual), P3, ends)).toBe(true);
   expect(falsified(p3BoundaryProperty(lessOrEqual), P3, endsAtTheBoundary)).toBe(true);
 });
@@ -296,13 +296,9 @@ function p5Property(subject: Evaluate) {
   );
 }
 
-it(
-  `P5 at 7 percentages the share of 100000 users in the rollout is within 5 sigma ${label(P5)}`,
-  { timeout: 60_000 },
-  () => {
-    fc.assert(p5Property(evaluate), P5);
-  },
-);
+it(`P5 the rollout share is within 5 sigma ${label(P5)}`, { timeout: 60_000 }, () => {
+  fc.assert(p5Property(evaluate), P5);
+});
 
 it(`P5 control: a constant hash is falsified ${label(P5)}`, { timeout: 60_000 }, () => {
   expect(falsified(p5Property(constantHash), P5)).toBe(true);
@@ -314,7 +310,7 @@ it(`P5 control: a constant hash is falsified ${label(P5)}`, { timeout: 60_000 },
 // one part replaced. With no part replaced the scaffold must pass every property,
 // so a control can only be falsified by the part it replaces.
 it(
-  `control scaffold: the broken evaluators' scaffold with no part replaced passes P1, P2, P3, P4 and P5 with the same runs (seed ${P1.seed})`,
+  `control scaffold: with no part replaced it passes P1 to P5 (seed ${P1.seed})`,
   { timeout: 60_000 },
   () => {
     fc.assert(p1Property(evaluatorWith({}), evaluatorWith({})), P1);

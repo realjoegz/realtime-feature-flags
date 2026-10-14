@@ -41,7 +41,7 @@ function agreesWithReference(subject: Evaluate, counts?: Record<Branch, number>)
   });
 }
 
-it(`evaluate() agrees with the reference evaluator on value, reason, rule index and bucket, each branch in at least 5 percent of runs ${label(DIFFERENTIAL)}`, () => {
+it(`evaluate() agrees with the reference evaluator ${label(DIFFERENTIAL)}`, () => {
   const counts: Record<Branch, number> = {
     disabled: 0,
     rule: 0,
@@ -66,17 +66,17 @@ function notFalsified(controls: Record<string, Evaluate>): string[] {
     .map(([name]) => name);
 }
 
-it(`control scaffold: the broken evaluators' scaffold with no part replaced agrees with the reference evaluator ${label(DIFFERENTIAL)}`, () => {
+it(`control scaffold: with no part replaced it agrees with the reference evaluator ${label(DIFFERENTIAL)}`, () => {
   fc.assert(agreesWithReference(evaluatorWith({})), WITH_EDGES);
 });
 
-it(`differential control: last match wins, a missing attribute read as the empty string, less-or-equal and UTF-16 code units are each falsified ${label(DIFFERENTIAL)}`, () => {
+it(`differential control: four rule and bucket bugs are each falsified ${label(DIFFERENTIAL)}`, () => {
   expect(
     notFalsified({ lastMatchWins, missingAttributeAsEmpty, lessOrEqual, charCodeBuckets }),
   ).toEqual([]);
 });
 
-it(`differential control: case-insensitive, trimmed and NFC-normalized attribute values and case-insensitive attribute names are each falsified ${label(DIFFERENTIAL)}`, () => {
+it(`differential control: four loose attribute matches are each falsified ${label(DIFFERENTIAL)}`, () => {
   expect(
     notFalsified({ caseInsensitiveValues, trimmedValues, normalizedValues, caseInsensitiveNames }),
   ).toEqual([]);

@@ -267,7 +267,7 @@ async function usersColumns(admin: pg.ClientBase): Promise<string[]> {
 }
 
 describe('personal data', () => {
-  it("GET /me/export returns the signed-in user's id, issuer, subject, email and name and each of its memberships with the tenant's id, slug and name and the role; U's export holds U's four canaries, no email, name, issuer or subject of another user, and of A's canaries only the slug and name of A, and no other user's export holds a canary of U", async () => {
+  it("GET /me/export returns the user's own data and nobody else's", async () => {
     await seedWithU();
     const { fixture, people } = env.world;
     const reply = await asU(EXPORT);
@@ -315,7 +315,7 @@ describe('personal data', () => {
     ).toEqual(signable.map((user) => ({ status: 200, id: user.id, canariesOfU: [] })));
   });
 
-  it('every column of users is in the export, with its value, or on the named exclusion list, which is empty; a column added to users fails that check', async () => {
+  it('every users column is in the export', async () => {
     await seedWithU();
     const columns = await usersColumns(env.admin);
     expect(columns).toEqual(['id', 'idp_issuer', 'idp_subject', 'email', 'name']);
@@ -346,7 +346,7 @@ describe('personal data', () => {
     }
   });
 
-  it("DELETE /me sets U's issuer, subject, email and name to NULL and keeps its id, deletes its memberships in A and B, and writes one audit row in each with U's id as actor and target, the action member.leave and U's former role; every earlier audit row, the two that name U included, and every other row of every table stay as they were, xmin included", async () => {
+  it('DELETE /me erases U and changes no other row', async () => {
     await seedWithU();
     const { fixture } = env.world;
     const auditBefore = await auditRows();
@@ -406,7 +406,7 @@ describe('personal data', () => {
     expect([...(await everyRow(rowsOfU(lastId)))]).toEqual([...before]);
   });
 
-  it("after DELETE /me, a scan of every text and JSON column of every table on the superuser connection, and of every Redis key and value under the run's prefix, finds no canary of U; before it, the database scan finds each canary in its users column, and the Redis scan finds a canary written there", async () => {
+  it('after DELETE /me no scan finds a canary of U', async () => {
     await seedWithU();
     const { fixture } = env.world;
     // Snapshots of U's tenants in the cache, read through U's app.
@@ -447,7 +447,7 @@ describe('personal data', () => {
     expect((await redisCanaries(env.redis, runPrefix, canariesOfU)).hits).toEqual([]);
   });
 
-  it("after DELETE /me, U's token, still valid, gets the same 401 on GET /me, GET /me/export and DELETE /me as a token for a subject that is not in users, and the three handlers, called with U's id as for a request the guard let through just before the deletion, refuse it as signed out", async () => {
+  it("after DELETE /me U's valid token is refused", async () => {
     await seedWithU();
     const me: Call = { method: 'GET', path: '/me' };
     expect((await asU(me)).status).toBe(200);
@@ -479,7 +479,7 @@ describe('personal data', () => {
     }
   });
 
-  it("while U is the only owner of the tenant it leaves last, DELETE /me leaves the other tenant first, writing its audit row, then gets 409, and changes no row of any table, xmin included, and U's token still works", async () => {
+  it('DELETE /me by an only owner gets 409 and changes nothing', async () => {
     await seedWithU();
     const { fixture } = env.world;
     // U leaves its tenants in id order. It is the only owner of the later one, and
@@ -506,7 +506,7 @@ describe('personal data', () => {
     expect((await asU({ method: 'GET', path: '/me' })).status).toBe(200);
   });
 
-  it("U's two DELETE /me requests at once: both wait for U's users row, the first erases U and gets 204, and the second then finds U erased and gets 401", async () => {
+  it('two DELETE /me by U at once get 204 and 401', async () => {
     await seedWithU();
     const lastId = (await auditRows()).at(-1)!.id;
     // A lock on U's users row, held on another connection, stops both deletions at
@@ -533,7 +533,7 @@ describe('personal data', () => {
     expect(rows).toEqual([{ action: 'member.leave' }, { action: 'member.leave' }]);
   });
 
-  it("U and A's editor, each a member of A and B with a different role in each, deleting themselves at once both get 204: both take the tenants' rows in id order, so neither waits for a row the other holds while holding one it needs", async () => {
+  it('two members of A and B deleting themselves at once both get 204', async () => {
     await seedWithU();
     const { fixture, people } = env.world;
     // U is an editor of A and an owner of B; A's editor becomes a viewer of B.
@@ -567,7 +567,7 @@ describe('personal data', () => {
     expect(rows).toEqual([{ n: 0 }]);
   });
 
-  it("B's only two owners deleting themselves at once: one gets 204 and the other 409, and B keeps one owner", async () => {
+  it("B's two owners deleting themselves at once get 204 and 409", async () => {
     await seedWithU();
     const { fixture, people } = env.world;
     // A lock on B's row, held on another connection, stops both deletions inside their

@@ -38,7 +38,7 @@ it('every flag and context in the conformance file is valid', () => {
   }
 });
 
-it('evaluate() gives the expected value, reason, rule index and bucket for all 551 conformance cases', () => {
+it('evaluate() gives the expected result for all 551 conformance cases', () => {
   expect(cases).toHaveLength(551);
   for (const entry of cases) {
     expect(
@@ -97,7 +97,7 @@ function nearMissNames(): number {
   });
 }
 
-it('the conformance file covers every branch, both sides of each boundary, buckets 0 and 9999, near-miss names and values, and non-ASCII keys', () => {
+it('the conformance file covers every branch, boundary side, edge bucket, near miss and non-ASCII key', () => {
   const branches = new Map<string, number>();
   for (const entry of cases) {
     const branch = branchOf(entry.expected);

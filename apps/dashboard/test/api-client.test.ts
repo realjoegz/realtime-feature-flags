@@ -43,7 +43,7 @@ const CALLS: Record<string, (session: Session) => Promise<unknown>> = {
 };
 
 describe('API client', () => {
-  it("every request function sends the session's access token as the bearer, and each session only its own", async () => {
+  it("every request function sends its own session's token", async () => {
     // A function added to the client without a call here fails this test.
     const functions = Object.entries(api)
       .filter(([, value]) => typeof value === 'function' && value !== api.ApiError)

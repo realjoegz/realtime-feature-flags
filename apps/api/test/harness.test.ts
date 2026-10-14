@@ -126,7 +126,7 @@ describe('test harness', () => {
     },
   );
 
-  it("the teardown's key check reports every key under a run prefix, outside <run>:harness:, that is not <run>:<environment>:flags:<tenant>:v<version> or whose entry names another tenant or version, and accepts cache entries and the harness's probe keys", async () => {
+  it("the teardown's key check reports every key but probe keys and valid cache entries", async () => {
     const run = harness();
     // A run prefix of its own, under this run's probe keys.
     const prefix = `${run.redisPrefix}:harness:${randomBytes(4).toString('hex')}`;

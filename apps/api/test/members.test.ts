@@ -77,7 +77,7 @@ describe('members', () => {
     });
   });
 
-  it('PUT /members/:userId changes the role of a member; a user who is not a member gives 404, and a body other than one known role gives 400, and neither changes a role', async () => {
+  it("PUT /members/:userId changes a member's role and refuses non-members and unknown roles", async () => {
     await env.world.seed(env.admin);
     const { people, fixture } = env.world;
     const owner = people.shared;
@@ -111,7 +111,7 @@ describe('members', () => {
     expect(await rolesInA()).toEqual({ ...before, [people.viewerOfA.id]: 'editor' });
   });
 
-  it('a tenant keeps an owner: demoting the only owner gives 409 and changes nothing, and two owners demoting each other at once leave exactly one owner', async () => {
+  it('a tenant keeps an owner, also under concurrent demotions', async () => {
     await env.world.seed(env.admin);
     const { people, fixture } = env.world;
     const alone = await env.send(
@@ -152,7 +152,7 @@ describe('members', () => {
 });
 
 describe('SDK keys', () => {
-  it('POST /sdk-keys returns rff_sdk_ and 32 random bytes in base64url once, stores only its SHA-256, and the SDK key look-up finds the tenant by that hash', async () => {
+  it('POST /sdk-keys returns a key once, stores only its SHA-256 and resolves it to the tenant', async () => {
     await env.world.seed(env.admin);
     const { people, fixture } = env.world;
     const create = (): Promise<{ status: number; body: unknown }> =>
@@ -212,7 +212,7 @@ describe('SDK keys', () => {
 });
 
 describe('GET /me', () => {
-  it("returns the signed-in user's id, email and name, and each tenant it belongs to with slug, name and role", async () => {
+  it('returns the user and its tenants with slug, name and role', async () => {
     await env.world.seed(env.admin);
     const { people, fixture } = env.world;
     const [a] = fixture.tenants;

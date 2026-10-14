@@ -52,7 +52,7 @@ const results = exampleResults({
 const resultsFiles = { [resultsFileName(results.startedAt)]: serializeResults(results) };
 
 describe('npm run check:latency', () => {
-  it('exits 1 when the placeholder is edited with no results files, when the table differs from the results files, and when bench/results holds another file, and exits 0 for a README that latency:render wrote', () => {
+  it('exits 1 on a stale table and 0 after latency:render', () => {
     expect(run('--check', repository(README))).toEqual({
       status: 0,
       output: 'check-latency: README.md holds the rendering of 0 results files\n',

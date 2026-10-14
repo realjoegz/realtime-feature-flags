@@ -113,7 +113,7 @@ function serialize(input: StreamInput): { bytes: Uint8Array; expected: SseEvent[
 const PARSER = runParams(300);
 
 describe('SSE parser', () => {
-  it(`events written with LF, CRLF or CR line ends, comments, heartbeats, ignored fields and multi-line data parse to the same events however the bytes are cut into chunks ${label(PARSER)}`, () => {
+  it(`any chunking of a generated stream gives the same events ${label(PARSER)}`, () => {
     fc.assert(
       fc.property(stream, (input) => {
         const { bytes, expected } = serialize(input);
@@ -126,14 +126,14 @@ describe('SSE parser', () => {
     );
   });
 
-  it('ignores the newline Nest writes with the headers, and reads a snapshot event and heartbeats as Nest writes them', () => {
+  it("reads Nest's output: its leading newline, a snapshot event and heartbeats", () => {
     // The bytes Nest 12 wrote in the spike for one snapshot event and two heartbeats.
     const nest = '\nevent: snapshot\nid: 8\ndata: {"version":8}\n\n: hb\n\n: hb\n\n';
     expect(parse([nest])).toEqual([{ type: 'snapshot', data: '{"version":8}', lastEventId: '8' }]);
     expect(parse(['\n', ': hb\n\n', ': hb\n\n'])).toEqual([]);
   });
 
-  it('a CR that ends one chunk and an LF that starts the next end one line, not two', () => {
+  it('a CR and LF split across chunks end one line', () => {
     // Read as two line ends, the empty line between them would dispatch "a" alone.
     expect(parse(['data: a\r', '\ndata: b\r', '\n\r', '\n'])).toEqual([
       { type: 'message', data: 'a\nb', lastEventId: '' },
@@ -141,7 +141,7 @@ describe('SSE parser', () => {
     expect(parse(['data: a\r\r'])).toEqual([{ type: 'message', data: 'a', lastEventId: '' }]);
   });
 
-  it('removes one space after the colon and keeps a second, reads a line without a colon as a field with an empty value, ignores an id holding U+0000, carries an id over to later events, and dispatches no event without data and no event cut off by the end', () => {
+  it('follows the standard on fields, ids and incomplete events', () => {
     expect(parse(['data:  two spaces\n\n'])).toEqual([
       { type: 'message', data: ' two spaces', lastEventId: '' },
     ]);
@@ -162,7 +162,7 @@ describe('SSE parser', () => {
     ]);
   });
 
-  it('decodes a UTF-8 sequence cut across chunks and removes a leading byte order mark', () => {
+  it('decodes split UTF-8 and drops a leading byte order mark', () => {
     const bytes = encoder.encode('data: 日本 ü 🚀\n\n');
     const cutInside = [bytes.subarray(0, 7), bytes.subarray(7, 18), bytes.subarray(18)];
     expect(parse(cutInside)).toEqual([{ type: 'message', data: '日本 ü 🚀', lastEventId: '' }]);

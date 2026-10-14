@@ -122,8 +122,8 @@ async function readAfterSaveFindings(env: Environment): Promise<Finding[]> {
   return findings;
 }
 
-describe('the snapshot cache', () => {
-  it(`a read misses and writes <prefix>:flags:<tenantId>:v<version> for ${CACHE_TTL_SECONDS} s, which then answers both apps and a stream that opens; a change deletes the previous version's entry, the next read misses at the new version and the one after hits, and every entry and answer is the snapshot as the database holds it`, async () => {
+describe('cache', () => {
+  it(`a miss writes an entry for ${CACHE_TTL_SECONDS} s that serves both apps until a change deletes it`, async () => {
     const env = await startEnvironment('cache', [{}, {}]);
     try {
       const tenantId = env.world.fixture.tenantA;
@@ -169,7 +169,7 @@ describe('the snapshot cache', () => {
     }
   });
 
-  it('a read that starts after a save returns the version and flags of that save, with the cache warm and cold, on the app that saved and on the other one, through GET /flags, POST /evaluate and a stream that opens', async () => {
+  it('a read that starts after a save returns that save', async () => {
     const env = await startEnvironment('cachesave', [{}, {}]);
     try {
       expect(await readAfterSaveFindings(env)).toEqual([]);
@@ -178,7 +178,7 @@ describe('the snapshot cache', () => {
     }
   });
 
-  it('control: with a cache that keeps the first entry stored for a tenant and answers every version with it, a read after a save returns the flags from before the save, and the same check reports it', async () => {
+  it('control: a cache stuck on its first entry is reported', async () => {
     const env = await startEnvironment(
       'cachestale',
       [0, 1].map(() => ({ override: (builder) => withCache(builder, FirstEntryCache) })),
