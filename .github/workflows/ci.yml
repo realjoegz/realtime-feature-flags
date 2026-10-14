@@ -14,13 +14,17 @@ permissions:
 
 # Every action is pinned to the commit of the release named in its comment. A tag
 # can be moved by the action's owner; a commit cannot. The runner image is pinned to
-# Ubuntu 24.04 as well, so a new ubuntu-latest does not change the build.
+# Ubuntu 24.04 as well, so a new ubuntu-latest does not change the build. No step
+# pushes or fetches, so checkout keeps the job's token out of .git/config, where
+# install scripts and tests could read it.
 jobs:
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -56,6 +60,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Build and start the stack
         run: docker compose up --build --detach --wait
