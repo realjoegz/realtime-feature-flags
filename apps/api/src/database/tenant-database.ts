@@ -2,7 +2,8 @@ import { Inject, Injectable } from '@nestjs/common';
 import pg from 'pg';
 import { PG_POOL } from '../tokens.js';
 
-// Every read and write of tenant data goes through withTenant. Row-level security
+// Every read and write of tenant data goes through withTenant, or for DELETE /me
+// through withUserAcrossTenants, which runs each step in one tenant. Row-level security
 // (migrations/0002_tenancy.sql) shows a transaction only the rows of the tenant in
 // app.tenant_id, and set_config(..., true) scopes that setting to the transaction,
 // so a pooled connection carries nothing into its next use. The settings are never
@@ -52,8 +53,32 @@ export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID.test(value);
 }
 
+/**
+ * What withUserAcrossTenants gives fn: runs step with app.tenant_id set to tenantId,
+ * in fn's transaction.
+ */
+export type InTenant = <R>(
+  tenantId: string,
+  step: (client: TenantClient) => Promise<R>,
+) => Promise<R>;
+
+export const NOT_A_MEMBER = 'inTenant: the user is not a member of the tenant';
+
+export const STEP_RUNNING = 'inTenant: another step is running; steps run one at a time';
+
+/** The transaction that transaction() gives its callback. */
+interface Transaction {
+  readonly client: TenantClient;
+  /** Sets app.tenant_id for the rest of the transaction ('' for none). */
+  setTenant(tenantId: string): Promise<void>;
+  /** Rolls the transaction back once the callback settles, and rejects with error. */
+  abort(error: unknown): void;
+}
+
 const SET_SCOPE =
   "SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true)";
+
+const SET_TENANT = "SELECT set_config('app.tenant_id', $1, true)";
 
 @Injectable()
 export class TenantDatabase {
@@ -72,7 +97,7 @@ export class TenantDatabase {
     if (scope.userId !== null && !isUuid(scope.userId)) {
       throw new TypeError('withTenant: userId is neither null nor a UUID');
     }
-    return this.transaction(scope.tenantId, scope.userId ?? '', fn);
+    return this.transaction(scope.tenantId, scope.userId ?? '', (tx) => fn(tx.client));
   }
 
   /**
@@ -82,13 +107,62 @@ export class TenantDatabase {
    */
   async withUser<T>(userId: string, fn: (client: TenantClient) => Promise<T>): Promise<T> {
     if (!isUuid(userId)) throw new TypeError('withUser: userId is not a UUID');
-    return this.transaction('', userId, fn);
+    return this.transaction('', userId, (tx) => fn(tx.client));
+  }
+
+  /**
+   * Runs fn like withUser, for a request about the signed-in user that changes rows
+   * in the tenants the user belongs to (DELETE /me), and gives it inTenant.
+   * inTenant(tenantId, step) runs step in the same transaction with app.tenant_id set
+   * to tenantId, then sets it back to ''. It enters a tenant only while the user is a
+   * member of it, read in the transaction through member_role_in_tenant as the guard
+   * reads it for a route under /tenants/:tenantId, so each statement of a step reads
+   * and writes the rows of one of the user's tenants. Steps run one at a time. When a
+   * step throws, the transaction rolls back and the call rejects with that error, also
+   * when fn catches it and returns.
+   */
+  async withUserAcrossTenants<T>(
+    userId: string,
+    fn: (client: TenantClient, inTenant: InTenant) => Promise<T>,
+  ): Promise<T> {
+    if (!isUuid(userId)) throw new TypeError('withUserAcrossTenants: userId is not a UUID');
+    return this.transaction('', userId, (tx) => {
+      let running = false;
+      const inTenant: InTenant = async <R>(
+        tenantId: string,
+        step: (client: TenantClient) => Promise<R>,
+      ): Promise<R> => {
+        if (!isUuid(tenantId)) throw new TypeError('inTenant: tenantId is not a UUID');
+        if (running) throw new Error(STEP_RUNNING);
+        running = true;
+        try {
+          const { rows } = await tx.client.query<{ role: MemberRole | null }>(
+            'SELECT public.member_role_in_tenant($1, $2) AS role',
+            [userId, tenantId],
+          );
+          if ((rows[0]?.role ?? null) === null) throw new Error(NOT_A_MEMBER);
+          await tx.setTenant(tenantId.toLowerCase());
+          let result: R;
+          try {
+            result = await step(tx.client);
+          } catch (error) {
+            tx.abort(error);
+            throw error;
+          }
+          await tx.setTenant('');
+          return result;
+        } finally {
+          running = false;
+        }
+      };
+      return fn(tx.client, inTenant);
+    });
   }
 
   private async transaction<T>(
     tenantSetting: string,
     userSetting: string,
-    fn: (client: TenantClient) => Promise<T>,
+    fn: (tx: Transaction) => Promise<T>,
   ): Promise<T> {
     const client = await this.pool.connect();
     // The pool listens for errors only on idle clients. A connection that drops while
@@ -106,6 +180,16 @@ export class TenantDatabase {
       query: (text, values) =>
         open ? client.query(text, values) : Promise.reject(new Error(TRANSACTION_ENDED)),
     };
+    let aborted: { readonly error: unknown } | undefined;
+    const tx: Transaction = {
+      client: scoped,
+      setTenant: async (tenantId) => {
+        await scoped.query(SET_TENANT, [tenantId]);
+      },
+      abort: (error) => {
+        aborted ??= { error };
+      },
+    };
     try {
       try {
         await client.query('BEGIN');
@@ -118,10 +202,11 @@ export class TenantDatabase {
         await client.query(SET_SCOPE, [tenantSetting, userSetting]);
         let result: T;
         try {
-          result = await fn(scoped);
+          result = await fn(tx);
         } finally {
           open = false;
         }
+        if (aborted !== undefined) throw aborted.error;
         // COMMIT of a transaction in which a statement failed rolls it back and
         // reports ROLLBACK without an error. That happens when fn catches the failure
         // and returns, and the caller must not take it for a commit.

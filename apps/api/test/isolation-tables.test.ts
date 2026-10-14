@@ -37,7 +37,14 @@ import {
   type Subject,
   writeFindings,
 } from './isolation/detectors.js';
-import { createFixture, type Fixture, tenancyRule } from './isolation/fixture.js';
+import {
+  createFixture,
+  type Fixture,
+  type Scope,
+  type TenancyRule,
+  tenancyRule,
+  uuidLiteral,
+} from './isolation/fixture.js';
 import {
   DEFINER_ALLOW_LIST,
   KEY_LOOKUP,
@@ -109,9 +116,24 @@ function describeFindings(findings: readonly Finding[]): string[] {
 
 const silent = { log: () => {}, warn: () => {}, error: () => {} };
 
+/** Each row of users and memberships as text, by its key, on the superuser connection. */
+async function usersAndMemberships(): Promise<Map<string, string>> {
+  const { rows } = await admin.query<{ key: string; row: string }>(
+    `SELECT 'users ' || id AS key, u::text AS row FROM public.users u
+     UNION ALL
+     SELECT 'memberships ' || tenant_id || ' ' || user_id, m::text FROM public.memberships m`,
+  );
+  return new Map(rows.map(({ key, row }) => [key, row]));
+}
+
 /** The username of a connection URL. */
 function userOf(url: string): string {
   return decodeURIComponent(new URL(url).username);
+}
+
+/** SQL that is true for the scope user's rows (alias t) in the scope's tenant. */
+function ownRowsIn(scope: Scope): string {
+  return `t.tenant_id = ${uuidLiteral(scope.tenantId)} AND t.user_id = ${uuidLiteral(scope.userId)}`;
 }
 
 describe('tenant isolation in the tables', () => {
@@ -179,8 +201,135 @@ describe('tenant isolation in the tables', () => {
     expect(describeFindings(await selectFindings(asApp()))).toEqual([]);
   });
 
-  it("in B's context an unfiltered UPDATE and an unfiltered DELETE by rff_app change no row outside B, and reach exactly B's rows where rff_app holds the privilege", async () => {
+  it("in B's context an unfiltered UPDATE and an unfiltered DELETE by rff_app change no row outside B, and reach exactly B's rows, or the narrower reach of the command's own policy, where rff_app holds the privilege", async () => {
     expect(describeFindings(await writeFindings(asApp()))).toEqual([]);
+    // Two commands have a reach of their own (migration 0004), and rff_app holds the
+    // privilege for both, so the check above ran them and compared their rows.
+    const own = relations.flatMap((relation) =>
+      (['UPDATE', 'DELETE'] as const)
+        .filter((command) => tenancyRule(relation)?.reach?.[command] !== undefined)
+        .map((command) => `${command} ${relation.name}`),
+    );
+    expect(own).toEqual(['DELETE public.memberships', 'UPDATE public.users']);
+  });
+
+  it("per-command reach: rff_app's UPDATE of users reaches only the current user's row, and only to set its issuer, subject, email and name to NULL; its DELETE on memberships reaches only the current user's membership in the current tenant; with no tenant set the UPDATE still reaches the current user's row and the DELETE nothing", async () => {
+    const { shared, aEditor, aViewer, bEditor, nobody } = fixture.users;
+    const { tenantA: A, tenantB: B } = fixture;
+    const names = new Map([
+      [shared.id, 'shared'],
+      [aEditor.id, "A's editor"],
+      [aViewer.id, "A's viewer"],
+      [bEditor.id, "B's editor"],
+      [nobody.id, 'nobody'],
+      [A, 'A'],
+      [B, 'B'],
+    ]);
+    const erase =
+      'UPDATE public.users SET idp_issuer = NULL, idp_subject = NULL, email = NULL, name = NULL';
+    const cases: {
+      label: string;
+      tenant: string | null;
+      user: string | null;
+      sql: string;
+      params?: unknown[];
+    }[] = [
+      {
+        label: 'erase every user, in B as the shared user',
+        tenant: B,
+        user: shared.id,
+        sql: erase,
+      },
+      {
+        label: "erase the shared user, in A as A's viewer, who sees that row",
+        tenant: A,
+        user: aViewer.id,
+        sql: `${erase} WHERE id = $1`,
+        params: [shared.id],
+      },
+      {
+        label: 'erase every user, with no tenant set, as nobody',
+        tenant: null,
+        user: nobody.id,
+        sql: erase,
+      },
+      { label: 'erase every user, in B with no user set', tenant: B, user: null, sql: erase },
+      {
+        label: "set every user's email, in B as the shared user",
+        tenant: B,
+        user: shared.id,
+        sql: "UPDATE public.users SET email = 'x@example.test'",
+      },
+      {
+        label: 'delete every membership, in B as the shared user',
+        tenant: B,
+        user: shared.id,
+        sql: 'DELETE FROM public.memberships',
+      },
+      {
+        label: "delete A's viewer's membership, in A as the shared user, A's owner",
+        tenant: A,
+        user: shared.id,
+        sql: 'DELETE FROM public.memberships WHERE user_id = $1',
+        params: [aViewer.id],
+      },
+      {
+        label: 'delete every membership, with no tenant set, as the shared user',
+        tenant: null,
+        user: shared.id,
+        sql: 'DELETE FROM public.memberships',
+      },
+      {
+        label: 'delete every membership, in B with no user set',
+        tenant: B,
+        user: null,
+        sql: 'DELETE FROM public.memberships',
+      },
+    ];
+    const app = await connectClient(database.appUrl, 'rff-test-isolation');
+    try {
+      const outcomes = await inSequence(cases, async ({ label, tenant, user, sql, params }) => {
+        await fixture.seed(admin);
+        const before = await usersAndMemberships();
+        await app.query('BEGIN');
+        await app.query(
+          `SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true)`,
+          [tenant ?? '', user ?? ''],
+        );
+        let refusal: string | undefined;
+        try {
+          await app.query(sql, params);
+          await app.query('COMMIT');
+        } catch (error) {
+          await app.query('ROLLBACK');
+          const { code, message } = error as { code?: string; message: string };
+          refusal = `${code}: ${message}`;
+        }
+        const after = await usersAndMemberships();
+        const reached = [...before]
+          .filter(([key, row]) => after.get(key) !== row)
+          .map(([key]) =>
+            key
+              .split(' ')
+              .map((part) => names.get(part) ?? part)
+              .join(' '),
+          );
+        return `${label}: ${refusal ?? `reached [${reached.join(', ')}]`}`;
+      });
+      expect(outcomes).toEqual([
+        'erase every user, in B as the shared user: reached [users shared]',
+        "erase the shared user, in A as A's viewer, who sees that row: reached []",
+        'erase every user, with no tenant set, as nobody: reached [users nobody]',
+        'erase every user, in B with no user set: reached []',
+        `set every user's email, in B as the shared user: 42501: new row violates row-level security policy for table "users"`,
+        'delete every membership, in B as the shared user: reached [memberships B shared]',
+        "delete A's viewer's membership, in A as the shared user, A's owner: reached []",
+        'delete every membership, with no tenant set, as the shared user: reached []',
+        'delete every membership, in B with no user set: reached []',
+      ]);
+    } finally {
+      await app.end();
+    }
   });
 
   it("in B's context rff_app cannot insert a row of A or move a row to A in any table", async () => {
@@ -506,6 +655,110 @@ describe('tenant isolation in the tables', () => {
       };
       expect(describeFindings(await noTenantFindings(replacing))).toEqual([
         'public.sound: the pool did not reuse the connection',
+      ]);
+    } finally {
+      await plain.end();
+    }
+  });
+
+  it("control: a declared reach wider than its policy's, such as a user's deletion reaching the user's memberships in every tenant, is reported by the reach count; a DELETE policy that reaches the current user's rows in every tenant is reported by the outside-B checksum, which a declared reach does not change; and one that reaches as many rows of B as declared, but another user's, is reported by the checksum of the rows outside the declared reach", async () => {
+    // The migrated schema, with memberships' DELETE declared to reach the shared
+    // user's memberships in every tenant. The policy reaches only the one in B.
+    const memberships = relations.filter((relation) => relation.name === 'public.memberships');
+    const declared = tenancyRule(memberships[0]!);
+    const everyTenant: TenancyRule = {
+      ...declared!,
+      reach: { DELETE: (scope) => `t.user_id = ${uuidLiteral(scope.userId)}` },
+    };
+    expect(
+      describeFindings(
+        await writeFindings({ ...asApp(), relations: memberships, rule: () => everyTenant }),
+      ),
+    ).toEqual(["public.memberships: DELETE in B's context reached 1 rows; its reach in B has 2"]);
+
+    // Three tables in a scratch database whose DELETE policies reach one user's rows:
+    // leave_here the current user's in the current tenant only, as memberships does;
+    // leave_everywhere the current user's in every tenant; leave_other another user's
+    // in the current tenant. leave_here and leave_everywhere declare their policy's
+    // reach exactly. leave_other declares leave_here's reach, as many rows as its
+    // policy reaches in B, and other ones.
+    const scratch = await createScratchDatabase('isoreach');
+    const role = await createScratchRole('isoreach');
+    const plain = await connectClient(scratch.adminUrl, 'rff-test-isolation');
+    const A = randomUUID();
+    const B = randomUUID();
+    const user = randomUUID();
+    const other = randomUUID();
+    const canary = `canary${randomBytes(6).toString('hex')}`;
+    const tenant = `NULLIF(current_setting('app.tenant_id', true), '')::uuid`;
+    const me = `NULLIF(current_setting('app.user_id', true), '')::uuid`;
+    const tables = {
+      leave_everywhere: `FOR DELETE USING (user_id = ${me})`,
+      leave_here: `AS RESTRICTIVE FOR DELETE USING (user_id = ${me})`,
+      leave_other: `AS RESTRICTIVE FOR DELETE USING (user_id <> ${me})`,
+    };
+    try {
+      await inSequence(Object.entries(tables), ([name, policy]) =>
+        plain.query(
+          [
+            `CREATE TABLE public.${name} (
+               id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+               tenant_id uuid NOT NULL,
+               user_id uuid NOT NULL,
+               body text NOT NULL
+             )`,
+            `ALTER TABLE public.${name} ENABLE ROW LEVEL SECURITY`,
+            `ALTER TABLE public.${name} FORCE ROW LEVEL SECURITY`,
+            `CREATE POLICY isolated ON public.${name}
+               USING (tenant_id = ${tenant}) WITH CHECK (tenant_id = ${tenant})`,
+            `CREATE POLICY leave ON public.${name} ${policy}`,
+            `GRANT SELECT, DELETE, UPDATE (body) ON public.${name} TO ${ident(role.name)}`,
+          ].join(';\n'),
+        ),
+      );
+      const reseed = async (): Promise<void> => {
+        await inSequence(Object.keys(tables), async (name) => {
+          await plain.query(`TRUNCATE public.${name}`);
+          await plain.query(
+            `INSERT INTO public.${name} (tenant_id, user_id, body)
+             SELECT * FROM unnest($1::uuid[], $2::uuid[], $3::text[])`,
+            [
+              [A, A, B, B],
+              [user, other, user, other],
+              [canary, canary, 'a row of B', 'a row of B'],
+            ],
+          );
+        });
+      };
+      await reseed();
+      const universe = await reachableRelations(plain, role.name);
+      const reach: Record<string, (scope: Scope) => string> = {
+        'public.leave_everywhere': (scope) =>
+          `(t.tenant_id = ${uuidLiteral(scope.tenantId)} OR t.user_id = ${uuidLiteral(scope.userId)})`,
+        'public.leave_here': ownRowsIn,
+        'public.leave_other': ownRowsIn,
+      };
+      const subject: Subject = {
+        admin: plain,
+        role: role.name,
+        url: scratch.urlFor(role),
+        relations: universe.relations,
+        rule: (relation) => {
+          const rule = tenancyRule(relation, {});
+          const own = reach[relation.name];
+          return rule === undefined || own === undefined
+            ? rule
+            : { ...rule, reach: { DELETE: own } };
+        },
+        contexts: { A: { tenantId: A, userId: user }, B: { tenantId: B, userId: user } },
+        reseed,
+      };
+      expect(universe.relations.map((relation) => relation.name)).toEqual(Object.keys(reach));
+      // leave_other's DELETE reaches one row of B, as many as declared, and the
+      // checksum of the rows outside the declared reach reports that it is another.
+      expect(describeFindings(await writeFindings(subject))).toEqual([
+        "public.leave_everywhere: an unfiltered DELETE in B's context changed rows outside B in public.leave_everywhere (2 rows before, 1 after)",
+        "public.leave_other: an unfiltered DELETE in B's context changed rows outside its reach (3 rows before, 2 after)",
       ]);
     } finally {
       await plain.end();

@@ -4,6 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { connectClient } from '../src/database/connect.js';
 import { createPool } from '../src/database/pool.js';
 import {
+  NOT_A_MEMBER,
+  STEP_RUNNING,
+  type TenantClient,
   TenantDatabase,
   TRANSACTION_ABORTED,
   TRANSACTION_ENDED,
@@ -60,6 +63,18 @@ function outcome(query: Promise<pg.QueryResult<Session>>): Promise<string | null
 }
 
 const scope = () => ({ tenantId: randomUUID(), userId: randomUUID() });
+
+/** The settings, the transaction and the number of flags a client sees. */
+async function read(client: TenantClient) {
+  const session = (await client.query<Session>(SESSION)).rows[0] as Session;
+  const xid = (await client.query<{ xid: string }>(XACT)).rows[0]?.xid ?? '';
+  const { rows } = await client.query<{ n: number }>('SELECT count(*)::int AS n FROM public.flags');
+  return { tenant: session.tenant, user: session.user, xid, flags: rows[0]?.n };
+}
+
+async function slow(client: TenantClient): Promise<void> {
+  await client.query('SELECT pg_catalog.pg_sleep(0.05)');
+}
 
 describe('withTenant', () => {
   it('runs fn in one transaction on one connection with app.tenant_id and app.user_id set, and commits it', async () => {
@@ -260,6 +275,106 @@ describe('withTenant', () => {
       );
       expect(seen).toEqual(scopes);
     });
+  });
+});
+
+describe('withUserAcrossTenants', () => {
+  let fixture: Fixture;
+  let database: Awaited<ReturnType<typeof createMigratedDatabase>>;
+
+  beforeAll(async () => {
+    database = await createMigratedDatabase('across');
+    fixture = createFixture();
+    const admin = await connectClient(database.adminUrl, 'rff-test-across');
+    try {
+      await fixture.seed(admin);
+    } finally {
+      await admin.end();
+    }
+  });
+
+  async function onDatabase<T>(fn: (db: TenantDatabase, pool: pg.Pool) => Promise<T>): Promise<T> {
+    const pool = createPool({ url: database.appUrl, poolMax: 1, connectDeadlineMs: 0 }, silent);
+    try {
+      return await fn(new TenantDatabase(pool), pool);
+    } finally {
+      await pool.end();
+    }
+  }
+
+  async function flagsOfA(): Promise<string> {
+    const admin = await connectClient(database.adminUrl, 'rff-test-across');
+    try {
+      const { rows } = await admin.query<{ sum: string }>(
+        `SELECT md5(string_agg(f.xmin::text || ' ' || f::text, E'\\n' ORDER BY f.key)) AS sum
+         FROM public.flags f WHERE f.tenant_id = $1`,
+        [fixture.tenantA],
+      );
+      return rows[0]?.sum ?? '';
+    } finally {
+      await admin.end();
+    }
+  }
+
+  it("runs each step in fn's transaction with app.tenant_id set to one of the user's tenants and back to '' after it, and refuses a tenant the user is not a member of", async () => {
+    const { shared, aEditor } = fixture.users;
+    const { tenantA: A, tenantB: B } = fixture;
+    await onDatabase(async (db) => {
+      const seen = await db.withUserAcrossTenants(shared.id, async (client, inTenant) => {
+        const outside = await read(client);
+        const inA = await inTenant(A, read);
+        const between = await read(client);
+        const inB = await inTenant(B.toUpperCase(), read);
+        const after = await read(client);
+        const unknown = await inTenant(randomUUID(), read).catch((error: Error) => error.message);
+        const malformed = await inTenant('not-a-uuid', read).catch((error: Error) => error.message);
+        return { outside, inA, between, inB, after, refused: [unknown, malformed] };
+      });
+      const xid = seen.outside.xid;
+      expect(seen).toEqual({
+        outside: { tenant: '', user: shared.id, xid, flags: 0 },
+        inA: { tenant: A, user: shared.id, xid, flags: 3 },
+        between: { tenant: '', user: shared.id, xid, flags: 0 },
+        inB: { tenant: B, user: shared.id, xid, flags: 2 },
+        after: { tenant: '', user: shared.id, xid, flags: 0 },
+        refused: [NOT_A_MEMBER, 'inTenant: tenantId is not a UUID'],
+      });
+      // A's editor is a member of A only.
+      const ofEditor = await db.withUserAcrossTenants(aEditor.id, async (_client, inTenant) => {
+        const inA = await inTenant(A, read);
+        const inB = await inTenant(B, read).catch((error: Error) => error.message);
+        return [inA.tenant, inB];
+      });
+      expect(ofEditor).toEqual([A, NOT_A_MEMBER]);
+    });
+  });
+
+  it('rolls the whole transaction back when a step throws, also when fn catches the error and returns, and runs one step at a time', async () => {
+    const { shared } = fixture.users;
+    const { tenantA: A, tenantB: B } = fixture;
+    const before = await flagsOfA();
+    await onDatabase(async (db, pool) => {
+      let xid = '';
+      const failure = new Error('the step failed');
+      await expect(
+        db.withUserAcrossTenants(shared.id, async (client, inTenant) => {
+          xid = (await client.query<{ xid: string }>(XACT)).rows[0]?.xid ?? '';
+          await inTenant(A, async (tenant) => {
+            await tenant.query('UPDATE public.flags SET enabled = NOT enabled');
+            throw failure;
+          }).catch(() => {});
+          return 'returned normally';
+        }),
+      ).rejects.toBe(failure);
+      expect(await status(pool, xid)).toBe('aborted');
+
+      await expect(
+        db.withUserAcrossTenants(shared.id, async (_client, inTenant) => {
+          await Promise.all([inTenant(A, slow), inTenant(B, slow)]);
+        }),
+      ).rejects.toThrow(STEP_RUNNING);
+    });
+    expect(await flagsOfA()).toBe(before);
   });
 });
 

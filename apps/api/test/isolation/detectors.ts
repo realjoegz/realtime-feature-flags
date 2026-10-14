@@ -6,7 +6,7 @@ import { inspectRole } from '../../src/database/role-check.js';
 import { TenantDatabase } from '../../src/database/tenant-database.js';
 import { ident, literal } from '../harness/settings.js';
 import type { Column, DefinerFunction, Relation } from './catalogue.js';
-import type { Scope, TenancyRule } from './fixture.js';
+import { reachOf, type Scope, type TenancyRule, type WriteCommand } from './fixture.js';
 
 // Each detector runs one isolation check against every relation of a universe and
 // returns what it found; an empty list means the check passed. The same detectors
@@ -360,50 +360,88 @@ async function valueOfB(
   return rows[0]?.value ?? null;
 }
 
+const WRITE_COMMANDS: readonly WriteCommand[] = ['UPDATE', 'DELETE'];
+
+/** The statement of the write check for command, and whether the role may run it. */
+async function writeStatement(
+  subject: Subject,
+  relation: Relation,
+  rule: TenancyRule,
+  command: WriteCommand,
+): Promise<{ sql: string; params: unknown[]; privileged: boolean }> {
+  if (command === 'DELETE') {
+    return {
+      sql: `DELETE FROM ${relation.name}`,
+      params: [],
+      privileged: await tablePrivilege(subject, relation, 'DELETE'),
+    };
+  }
+  if (rule.updateSet !== undefined) {
+    const { rows } = await subject.admin.query<{ held: boolean }>(
+      `SELECT pg_catalog.has_any_column_privilege($1, $2::regclass, 'UPDATE') AS held`,
+      [subject.role, relation.name],
+    );
+    return {
+      sql: `UPDATE ${relation.name} SET ${rule.updateSet}`,
+      params: [],
+      privileged: rows[0]?.held === true,
+    };
+  }
+  const { column, privileged } = await updateTarget(subject, relation, rule);
+  const value = await valueOfB(subject, relation, rule, column);
+  return {
+    sql: `UPDATE ${relation.name} SET ${ident(column.name)} = $1::${column.type}`,
+    params: [value],
+    privileged,
+  };
+}
+
 /**
  * Check 4: in B's context an unfiltered UPDATE and an unfiltered DELETE, both
  * committed, leave every row outside B as it was, xmin included, in every relation
  * of the universe. Where the role holds the privilege, the statement must reach
- * exactly B's rows; where it does not, it must be refused.
+ * exactly B's rows, or for a command with a reach of its own in the tenancy rule
+ * exactly those rows, and leave the relation's other rows as they were; where it does
+ * not, it must be refused.
  *
- * The UPDATE sets the column to a constant, a value of one of B's rows, and reads no
- * column of the rows it changes. A statement that reads them (SET c = c, a WHERE or
- * RETURNING clause) also applies the SELECT policies, which would hide an UPDATE
- * policy that reaches A's rows.
+ * The UPDATE sets the column to a constant, a value of one of B's rows, or what the
+ * rule's updateSet gives, and reads no column of the rows it changes. A statement
+ * that reads them (SET c = c, a WHERE or RETURNING clause) also applies the SELECT
+ * policies, which would hide an UPDATE policy that reaches A's rows.
  */
 export function writeFindings(subject: Subject): Promise<Finding[]> {
   const { B } = subject.contexts;
   return withSubjectDatabase(subject, (db) =>
     eachRelation(subject, async (relation, rule) => {
-      const details: string[] = [];
-      const bRows = (await adminRows(subject, relation, visible(rule, B))).n;
-
-      const { column, privileged: mayUpdate } = await updateTarget(subject, relation, rule);
-      const value = await valueOfB(subject, relation, rule, column);
-      const beforeUpdate = await outsideBEverywhere(subject);
-      const update = await attempt(
-        db,
-        B,
-        `UPDATE ${relation.name} SET ${ident(column.name)} = $1::${column.type}`,
-        [value],
-        true,
-      );
-      const afterUpdate = await outsideBEverywhere(subject);
-      for (const changed of changedOutsideB(beforeUpdate, afterUpdate)) {
-        details.push(`an unfiltered UPDATE in B's context changed rows outside B in ${changed}`);
-      }
-      details.push(...expectReach('UPDATE', update, mayUpdate, bRows));
-
-      const mayDelete = await tablePrivilege(subject, relation, 'DELETE');
-      const beforeDelete = await outsideBEverywhere(subject);
-      const removal = await attempt(db, B, `DELETE FROM ${relation.name}`, [], true);
-      const afterDelete = await outsideBEverywhere(subject);
-      await subject.reseed();
-      for (const changed of changedOutsideB(beforeDelete, afterDelete)) {
-        details.push(`an unfiltered DELETE in B's context changed rows outside B in ${changed}`);
-      }
-      details.push(...expectReach('DELETE', removal, mayDelete, bRows));
-      return details;
+      const perCommand = await inSequence(WRITE_COMMANDS, async (command) => {
+        const details: string[] = [];
+        const own = rule.reach?.[command] !== undefined;
+        const reach = `coalesce((${reachOf(rule, command, B)}), false)`;
+        const reachRows = (await adminRows(subject, relation, reach)).n;
+        const { sql, params, privileged } = await writeStatement(subject, relation, rule, command);
+        const unreached = () => adminRows(subject, relation, `NOT ${reach}`, true);
+        const before = await outsideBEverywhere(subject);
+        const unreachedBefore = own ? await unreached() : undefined;
+        const outcome = await attempt(db, B, sql, params, true);
+        const after = await outsideBEverywhere(subject);
+        const unreachedAfter = own ? await unreached() : undefined;
+        // The UPDATE's changes stay for the DELETE; the next relation starts from the seed.
+        if (command === 'DELETE') await subject.reseed();
+        for (const changed of changedOutsideB(before, after)) {
+          details.push(
+            `an unfiltered ${command} in B's context changed rows outside B in ${changed}`,
+          );
+        }
+        if (unreachedBefore !== undefined && unreachedBefore.sum !== unreachedAfter?.sum) {
+          details.push(
+            `an unfiltered ${command} in B's context changed rows outside its reach ` +
+              `(${unreachedBefore.n} rows before, ${unreachedAfter?.n ?? 'none'} after)`,
+          );
+        }
+        details.push(...expectReach(command, outcome, privileged, reachRows, own));
+        return details;
+      });
+      return perCommand.flat();
     }),
   );
 }
@@ -412,13 +450,15 @@ function expectReach(
   statement: string,
   outcome: Outcome,
   privileged: boolean,
-  bRows: number,
+  reachRows: number,
+  ownReach: boolean,
 ): string[] {
   if (privileged) {
     if (outcome.error !== undefined) return [`${statement} failed: ${outcome.error.message}`];
-    return outcome.rowCount === bRows
+    const expected = ownReach ? `its reach in B has ${reachRows}` : `B has ${reachRows}`;
+    return outcome.rowCount === reachRows
       ? []
-      : [`${statement} in B's context reached ${outcome.rowCount} rows; B has ${bRows}`];
+      : [`${statement} in B's context reached ${outcome.rowCount} rows; ${expected}`];
   }
   return refusalOf(outcome.error) === 'privilege'
     ? []

@@ -12,12 +12,33 @@ export interface Scope {
   readonly userId: string | null;
 }
 
+export type WriteCommand = 'UPDATE' | 'DELETE';
+
 /** Which rows of a relation a scope sees, stated on the admin connection. */
 export interface TenancyRule {
   /** SQL that is true for the rows (alias t) visible to the scope. */
   readonly visibleIn: (scope: Scope) => string;
   /** The column that names a row's tenant, or null when the relation has none. */
   readonly tenantColumn: string | null;
+  /**
+   * For a command whose policies reach other rows than visibleIn: SQL that is true for
+   * the rows (alias t) an unfiltered statement of that command reaches in the scope.
+   * The write check then requires exactly these rows and leaves every other row of the
+   * relation as it was. It compares the rows outside B with no regard to this, so where
+   * the role holds the privilege, a reach wider than what the scope sees is reported.
+   */
+  readonly reach?: Partial<Record<WriteCommand, (scope: Scope) => string>>;
+  /**
+   * The SET list of the write check's unfiltered UPDATE, for a relation whose UPDATE
+   * policy accepts only some new rows. By default the UPDATE sets one column to a
+   * value of one of B's rows.
+   */
+  readonly updateSet?: string;
+}
+
+/** The rows a command reaches in a scope: its own reach, else the visible rows. */
+export function reachOf(rule: TenancyRule, command: WriteCommand, scope: Scope): string {
+  return (rule.reach?.[command] ?? rule.visibleIn)(scope);
 }
 
 /** A SQL uuid literal; the value is checked first, so it cannot break out of the quotes. */
@@ -35,8 +56,12 @@ const byTenantColumn = (column: string): TenancyRule => ({
 });
 
 /**
- * The relations whose tenant is not in a tenant_id column. users follows its policy
- * in migration 0002: the current user, and the members of the current tenant.
+ * The relations whose tenant is not in a tenant_id column, and those whose policies
+ * for a write reach other rows than they show. users follows its policies in
+ * migrations 0002 and 0004: a scope sees the current user and the members of the
+ * current tenant, and an UPDATE reaches only the current user's row, to set its
+ * personal fields to NULL. A DELETE on memberships reaches only the current user's
+ * membership in the current tenant (0004).
  */
 export const TENANCY_RULES: Readonly<Record<string, TenancyRule>> = {
   'public.tenants': byTenantColumn('id'),
@@ -46,6 +71,15 @@ export const TENANCY_RULES: Readonly<Record<string, TenancyRule>> = {
          SELECT FROM public.memberships m
          WHERE m.user_id = t.id AND m.tenant_id = ${uuidLiteral(scope.tenantId)}))`,
     tenantColumn: null,
+    reach: { UPDATE: (scope) => `t.id = ${uuidLiteral(scope.userId)}` },
+    updateSet: 'idp_issuer = NULL, idp_subject = NULL, email = NULL, name = NULL',
+  },
+  'public.memberships': {
+    ...byTenantColumn('tenant_id'),
+    reach: {
+      DELETE: (scope) =>
+        `t.tenant_id = ${uuidLiteral(scope.tenantId)} AND t.user_id = ${uuidLiteral(scope.userId)}`,
+    },
   },
 };
 

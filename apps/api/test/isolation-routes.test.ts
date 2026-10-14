@@ -25,6 +25,7 @@ import {
   routeTableFindings,
   SDK_KEY_ROUTES,
   SELF_ROUTE,
+  SELF_ROUTES,
   servedRoutes,
   STREAM_ROUTE,
   streamFindings,
@@ -54,7 +55,7 @@ function describeFindings(findings: readonly Finding[]): string[] {
   return findings.map((finding) => `${finding.relation}: ${finding.detail}`);
 }
 
-const tenantCases = ROUTE_CASES.filter((routeCase) => routeCase.route !== SELF_ROUTE);
+const tenantCases = ROUTE_CASES.filter((routeCase) => !SELF_ROUTES.includes(routeCase.route));
 
 /** A's rows in every table rff_app reaches, with their xmin, on the superuser connection. */
 function rowsOfA(target: Environment = env) {
@@ -111,7 +112,10 @@ describe('tenant isolation at the routes', () => {
     ).toEqual([]);
     expect(Object.keys(PUBLIC_ROUTES)).toEqual(['GET /health']);
     expect(SDK_KEY_ROUTES.map((routeCase) => routeCase.route)).toEqual([STREAM_ROUTE]);
-    expect(served).toHaveLength(13);
+    expect(ROUTE_CASES.filter((routeCase) => SELF_ROUTES.includes(routeCase.route))).toHaveLength(
+      3,
+    );
+    expect(served).toHaveLength(15);
   });
 
   it('each case: a member of A succeeds in A, and a member of B making the same request is refused exactly as for a tenant or resource that does not exist', async () => {
@@ -139,19 +143,32 @@ describe('tenant isolation at the routes', () => {
         }
       }
     }
-    // GET /me as users outside A: each sees only itself.
-    for (const user of [people.ownerOfB, people.editorOfB, people.outsider]) {
+    // GET /me and GET /me/export as users outside A: each sees only itself.
+    const outsideA = [people.ownerOfB, people.editorOfB, people.outsider];
+    for (const user of outsideA) {
       // eslint-disable-next-line no-await-in-loop -- one request at a time, in order
-      const reply = await env.send(user, { method: 'GET', path: '/me' });
-      expect(reply.status).toBe(200);
-      expect((reply.body as { id: string }).id).toBe(user.id);
-      replies.push({ route: SELF_ROUTE, reply });
+      const me = await env.send(user, { method: 'GET', path: '/me' });
+      expect(me.status).toBe(200);
+      expect((me.body as { id: string }).id).toBe(user.id);
+      // eslint-disable-next-line no-await-in-loop -- one request at a time, in order
+      const exported = await env.send(user, { method: 'GET', path: '/me/export' });
+      expect(exported.status).toBe(200);
+      expect((exported.body as { user: { id: string } }).user.id).toBe(user.id);
+      replies.push({ route: SELF_ROUTE, reply: me }, { route: 'GET /me/export', reply: exported });
     }
+    // Then DELETE /me by each of them: the owner of B is B's only owner and is refused,
+    // the editor of B leaves B, and the user in no tenant erases only its own row.
+    const deletions = await inSequence(outsideA, (user) =>
+      env.send(user, { method: 'DELETE', path: '/me' }),
+    );
+    expect(deletions.map((reply) => reply.status)).toEqual([409, 204, 204]);
+    replies.push(...deletions.map((reply) => ({ route: 'DELETE /me', reply })));
     const after = await rowsOfA();
     expect([...after]).toEqual([...before]);
     expect(describeFindings(canaryReplyFindings(replies, fixture.canaries))).toEqual([]);
     // The check can see a canary: A's own replies hold them.
-    const own = await env.send(people.shared, ROUTE_CASES[1]!.call(fixture.tenantA, ''));
+    const flagsOfA = ROUTE_CASES.find((c) => c.route === 'GET /tenants/:tenantId/flags')!;
+    const own = await env.send(people.shared, flagsOfA.call(fixture.tenantA, ''));
     expect(canaryReplyFindings([{ route: 'A', reply: own }], fixture.canaries)).not.toEqual([]);
   });
 
@@ -203,33 +220,38 @@ describe('tenant isolation at the routes', () => {
         access: routeCase.access,
         status: routeCase.status,
         call: routeCase.call(fixture.tenantA, routeCase.ids?.onlyInA(env.world) ?? ''),
+        matrix: routeCase.matrix,
       })),
       ...SDK_KEY_ROUTES.map((routeCase) => ({
         route: routeCase.route,
         access: routeCase.access,
         status: routeCase.status,
         call: routeCase.call(),
+        matrix: undefined,
       })),
       ...Object.entries(PUBLIC_ROUTES).map(([route, { call }]) => ({
         route,
         access: 'public' as const,
         status: 200,
         call,
+        matrix: undefined,
       })),
     ];
     const cells = routes.flatMap((route) => MATRIX_ACTORS.map((actor) => ({ route, actor })));
+    // A write that succeeded in one cell must not decide the next one.
+    let written = false;
     const actual = await inSequence(cells, async ({ route, actor }) => {
-      // A write that succeeded in one cell must not decide the next one.
-      if (route.call.method !== 'GET') await env.world.seed(env.admin);
+      if (written || route.call.method !== 'GET') await env.world.seed(env.admin);
+      written = route.call.method !== 'GET';
       const reply = await env.send(matrixUser(env.world, actor), route.call);
       return `${route.route} as ${actor}: ${reply.status}`;
     });
     const expected = cells.map(
       ({ route, actor }) =>
-        `${route.route} as ${actor}: ${expectedStatus(route.access, route.status, actor)}`,
+        `${route.route} as ${actor}: ${route.matrix?.[actor]?.status ?? expectedStatus(route.access, route.status, actor)}`,
     );
     expect(actual).toEqual(expected);
-    expect(cells).toHaveLength(13 * 5);
+    expect(cells).toHaveLength(15 * 5);
   });
 
   it("the SDK stream: A's key receives A's snapshot as the database holds it, B's key receives B's with no canary of A, and A's revoked key, an unknown key, a key one character short, A's key without the Bearer scheme and the token of A's owner get the same 401 as no key", async () => {

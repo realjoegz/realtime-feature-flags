@@ -122,29 +122,53 @@ export async function reachableRelations(
   const columns = await admin.query<ColumnRow>(COLUMNS, [rows.map((row) => row.oid)]);
   const relations = rows
     .filter((row) => !(row.name in allowList))
-    .map((row): Relation => ({
-      name: row.name,
-      kind: row.kind,
-      partition: row.partition,
-      rowSecurity: row.row_security,
-      forceRowSecurity: row.force_row_security,
-      securityInvoker: row.options.some((option) =>
-        /^security_invoker=(true|on|yes|1)$/i.test(option),
-      ),
-      columns: columns.rows
-        .filter((column) => column.relation === row.oid)
-        .map(({ name, type, free_text, generated, unique }) => ({
-          name,
-          type,
-          freeText: free_text,
-          generated,
-          unique,
-        })),
-    }));
+    .map((row) => relationOf(row, columns.rows));
   return {
     relations,
     allowListed: rows.filter((row) => row.name in allowList).map((row) => row.name),
   };
+}
+
+function relationOf(row: RelationRow, columns: readonly ColumnRow[]): Relation {
+  return {
+    name: row.name,
+    kind: row.kind,
+    partition: row.partition,
+    rowSecurity: row.row_security,
+    forceRowSecurity: row.force_row_security,
+    securityInvoker: row.options.some((option) =>
+      /^security_invoker=(true|on|yes|1)$/i.test(option),
+    ),
+    columns: columns
+      .filter((column) => column.relation === row.oid)
+      .map(({ name, type, free_text, generated, unique }) => ({
+        name,
+        type,
+        freeText: free_text,
+        generated,
+        unique,
+      })),
+  };
+}
+
+const EVERY_TABLE = `
+  SELECT pg_catalog.format('%I.%I', n.nspname, c.relname) AS name, c.oid::int8 AS oid,
+         c.relkind AS kind, c.relispartition AS partition, c.relrowsecurity AS row_security,
+         c.relforcerowsecurity AS force_row_security,
+         coalesce(c.reloptions, '{}') AS options
+  FROM pg_catalog.pg_class c
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE c.relkind IN ('r', 'p', 'm') AND NOT (${SYSTEM_SCHEMA})
+  ORDER BY 1`;
+
+/**
+ * Every table, partitioned table and materialized view outside the system schemas,
+ * whoever can reach it, with its columns: where a scan for stored data looks.
+ */
+export async function everyTable(admin: pg.ClientBase): Promise<Relation[]> {
+  const { rows } = await admin.query<RelationRow>(EVERY_TABLE);
+  const columns = await admin.query<ColumnRow>(COLUMNS, [rows.map((row) => row.oid)]);
+  return rows.map((row) => relationOf(row, columns.rows));
 }
 
 /** Whether schema.name exists as a relation. */

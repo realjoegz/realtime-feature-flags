@@ -42,7 +42,7 @@ async function auditOfA(): Promise<AuditRow[]> {
 
 /** A row the change writes: the table and the condition that finds it after the change. */
 interface WrittenRow {
-  readonly table: 'tenants' | 'flags' | 'memberships' | 'sdk_keys' | 'audit_log';
+  readonly table: 'tenants' | 'users' | 'flags' | 'memberships' | 'sdk_keys' | 'audit_log';
   readonly where: string;
   readonly params: readonly unknown[];
 }
@@ -94,6 +94,19 @@ function mutations(): Mutation[] {
     params: [fixture.tenantA, key],
   });
   return [
+    {
+      route: 'DELETE /me',
+      user: () => people.editorOfA,
+      call: () => ({ method: 'DELETE', path: '/me' }),
+      action: 'member.leave',
+      target: () => people.editorOfA.id,
+      before: { role: 'editor' },
+      after: () => null,
+      versioned: false,
+      // The membership row is gone; the user's row, erased, is written by the same
+      // transaction.
+      written: () => [{ table: 'users', where: 'id = $1', params: [people.editorOfA.id] }],
+    },
     {
       route: 'POST /tenants/:tenantId/flags',
       user: () => people.editorOfA,
@@ -183,7 +196,7 @@ describe('audit log', () => {
     expect(mutations().map((mutation) => mutation.route)).toEqual(changing);
   });
 
-  it("each mutating route's success adds exactly one audit row, written by the change's own transaction, whose actor is the token's user and whose version is the new tenant version for flag writes and empty for member and SDK key changes", async () => {
+  it("each mutating route's success adds exactly one audit row, written by the change's own transaction, whose actor is the token's user and whose version is the new tenant version for flag writes and empty for member, SDK key and personal data changes", async () => {
     for (const mutation of mutations()) {
       // eslint-disable-next-line no-await-in-loop -- each mutation starts from the seeded rows
       await env.world.seed(env.admin);
@@ -233,7 +246,8 @@ describe('audit log', () => {
     }
     // The SDK key's row names it by id only: neither the key nor its hash is stored there.
     await env.world.seed(env.admin);
-    const created = await env.send(env.world.people.shared, mutations()[4]!.call());
+    const sdkKey = mutations().find((mutation) => mutation.route.endsWith('/sdk-keys'))!;
+    const created = await env.send(env.world.people.shared, sdkKey.call());
     const { key } = created.body as { key: string };
     expect(JSON.stringify(await auditOfA())).not.toContain(key);
   });
@@ -279,7 +293,7 @@ describe('audit log', () => {
       await env.world.seed(env.admin);
       return (await env.send(mutation.user(), mutation.call())).status;
     });
-    expect(statuses).toEqual([201, 200, 200, 200, 201]);
+    expect(statuses).toEqual([204, 201, 200, 200, 200, 201]);
   });
 
   it("rff_app's UPDATE and DELETE on audit_log are refused, in its own tenant's context too, and the rows stay", async () => {

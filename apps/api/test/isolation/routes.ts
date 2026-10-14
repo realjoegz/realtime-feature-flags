@@ -28,10 +28,20 @@ export interface RouteCase {
   readonly call: (tenantId: string, id: string) => Call;
   /** For a route with a resource: an id that exists only in A, and one that exists nowhere. */
   readonly ids?: { readonly onlyInA: (world: World) => string; readonly missing: () => string };
+  /** Role matrix cells whose status the access level alone does not give, with the reason. */
+  readonly matrix?: Partial<
+    Record<MatrixActor, { readonly status: number; readonly reason: string }>
+  >;
 }
 
 /** GET /me is about the caller, not a tenant: each user sees only itself. */
 export const SELF_ROUTE = 'GET /me';
+
+/**
+ * The routes about the caller and no tenant: GET /me, and the export and deletion of
+ * the caller's personal data. Each user reads and erases only its own.
+ */
+export const SELF_ROUTES: readonly RouteName[] = [SELF_ROUTE, 'GET /me/export', 'DELETE /me'];
 
 /**
  * A route whose tenant is the SDK key's, so no request names another tenant: with
@@ -170,6 +180,19 @@ export const ROUTE_CASES: readonly RouteCase[] = [
     access: 'signed-in',
     status: 200,
     call: () => ({ method: 'GET', path: '/me' }),
+  },
+  {
+    route: 'GET /me/export',
+    access: 'signed-in',
+    status: 200,
+    call: () => ({ method: 'GET', path: '/me/export' }),
+  },
+  {
+    route: 'DELETE /me',
+    access: 'signed-in',
+    status: 204,
+    call: () => ({ method: 'DELETE', path: '/me' }),
+    matrix: { owner: { status: 409, reason: "the owner of A is A's only owner" } },
   },
   {
     route: 'GET /tenants/:tenantId/flags',
