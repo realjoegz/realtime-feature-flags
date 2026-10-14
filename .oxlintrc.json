@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "typescript", "unicorn", "oxc", "import", "node", "promise", "vitest"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error",
+    "perf": "error"
+  },
+  "env": {
+    "node": true,
+    "es2024": true
+  },
+  "ignorePatterns": ["**/dist/**", "coverage/**", ".vitest/**"],
+  "rules": {
+    "import/no-named-as-default-member": "off",
+    "vitest/valid-expect": ["error", { "maxArgs": 2 }],
+    "vitest/expect-expect": ["error", { "assertFunctionNames": ["expect", "fc.assert"] }]
+  },
+  "overrides": [
+    {
+      "files": ["scripts/test/fixtures/**"],
+      "rules": {
+        "eslint/no-unreachable": "off",
+        "vitest/no-disabled-tests": "off",
+        "vitest/warn-todo": "off"
+      }
+    }
+  ]
+}

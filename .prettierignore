@@ -1,0 +1,15 @@
+package-lock.json
+**/dist/
+coverage/
+.vitest/
+LICENSE
+
+# Markdown keeps its own layout: Prettier pads every table cell to the widest cell
+# in its column, and the claim tables have long cells.
+*.md
+
+# One case per line, written by packages/core/test/reference/write-conformance.ts.
+packages/core/conformance/evaluation-cases.json
+
+# Fixtures whose exact bytes the script tests depend on.
+scripts/test/fixtures/words/

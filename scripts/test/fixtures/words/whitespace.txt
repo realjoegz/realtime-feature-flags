@@ -1,0 +1,7 @@
+tabs	and  double  spaces
+CRLF line
+ vertical tab  form feed
+   leading and trailing   
+
+
+last

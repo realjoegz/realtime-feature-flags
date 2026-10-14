@@ -1,0 +1,16 @@
+# An allowlist: an image build sees only the files named here.
+*
+!package.json
+!package-lock.json
+!tsconfig.base.json
+!packages/
+!apps/
+
+# Never sent, even inside an allowed directory.
+**/node_modules
+**/dist
+**/coverage
+**/.vitest
+**/*.tsbuildinfo
+**/.env
+**/.env.*

@@ -1,0 +1,37 @@
+{
+  "name": "realtime-feature-flags",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Multi-tenant feature flags: a NestJS API, an SSE stream to an SDK that evaluates flags locally, and a Next.js dashboard.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": "24.13.0"
+  },
+  "packageManager": "npm@11.6.2",
+  "scripts": {
+    "lint": "oxlint --deny-warnings",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc -p tsconfig.json && npm run build:packages && npm run typecheck --workspaces --if-present",
+    "build:packages": "npm run build --workspace packages --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "vitest run",
+    "check:claims": "node scripts/check-claims.mjs",
+    "check:words": "node scripts/check-readme-words.mjs",
+    "verify": "npm run lint && npm run format:check && npm run typecheck && npm run build && npm test && npm run check:claims && npm run check:words"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "fast-check": "4.10.2",
+    "oxlint": "1.88.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "vite": "8.3.4",
+    "vitest": "5.0.4"
+  }
+}
