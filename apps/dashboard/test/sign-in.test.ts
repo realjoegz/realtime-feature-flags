@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GET as callback } from '../app/auth/callback/route';
 import { GET as login } from '../app/auth/login/route';
+import { POST as logout } from '../app/auth/logout/route';
 import { FLOW_COOKIE, openFlow, openSession, sealFlow, SESSION_COOKIE } from '../lib/cookies';
 import { REDIRECT_URI, SESSION_SECRET, useDashboardEnv } from './support/env';
 import { type Provider, startProvider } from './support/provider';
@@ -61,6 +62,13 @@ function callbackRequest(url: URL | string, flowValue?: string): NextRequest {
   if (flowValue !== undefined)
     headers['cookie'] = `${FLOW_COOKIE}=${encodeURIComponent(flowValue)}`;
   return new NextRequest(url, { headers });
+}
+
+/** POST /auth/logout as a browser sends it, with the Origin header given, or none. */
+function logoutRequest(origin?: string): NextRequest {
+  const headers: Record<string, string> = {};
+  if (origin !== undefined) headers['origin'] = origin;
+  return new NextRequest('http://127.0.0.1:3100/auth/logout', { method: 'POST', headers });
 }
 
 /** Asserts a refusal: 400 with the reason, no session cookie, and the flow cookie deleted. */
@@ -168,5 +176,18 @@ describe('sign-in', () => {
     expect(provider.tokenRequests).toBe(before);
     // The same callback with the flow cookie the sign-in set is accepted.
     expect((await callback(callbackRequest(url, flow.value))).status).toBe(303);
+  });
+
+  it("sign-out from the dashboard's origin deletes the session cookie; with no Origin or another site's it answers 403 and sets no cookie", () => {
+    const response = logout(logoutRequest(new URL(REDIRECT_URI).origin));
+    expect(response.status).toBe(303);
+    expect(response.headers.get('location')).toBe('http://127.0.0.1:3100/signed-out');
+    expect(setCookies(response).get(SESSION_COOKIE)?.attributes['max-age']).toBe('0');
+
+    for (const origin of [undefined, 'null', 'http://127.0.0.1:9999', 'http://localhost:3100']) {
+      const refused = logout(logoutRequest(origin));
+      expect(refused.status, origin).toBe(403);
+      expect(refused.headers.getSetCookie(), origin).toEqual([]);
+    }
   });
 });
