@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
-    "migrate": "node dist/migrate-main.js"
+    "migrate": "node dist/migrate-main.js",
+    "seed": "node dist/seed-main.js"
   },
   "dependencies": {
     "@nestjs/common": "12.1.3",

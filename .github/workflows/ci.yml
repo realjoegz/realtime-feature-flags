@@ -47,8 +47,10 @@ jobs:
           include-hidden-files: true
           if-no-files-found: ignore
 
-  # The whole compose stack from a clean checkout: the API image builds, migrate exits
-  # 0, both replicas turn healthy, and scripts/demo.sh passes against them.
+  # The whole compose stack from a clean checkout: the API and dashboard images build,
+  # migrate and seed exit 0, Dex, both replicas and the dashboard turn healthy, and
+  # scripts/demo.sh passes against them (sign-in through Dex with curl, delivery from
+  # one replica to the other, a viewer's refusal and tenant isolation).
   local-stack:
     runs-on: ubuntu-24.04
     timeout-minutes: 15

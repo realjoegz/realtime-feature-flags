@@ -1,0 +1,86 @@
+# Dex for the local compose stack (compose.yaml). Every user, password and client
+# secret in this file is a local demo credential: it is published with the
+# repository, and nothing outside a local stack may accept it.
+#
+#   user                password           seeded memberships (apps/api/src/seed/demo-data.ts)
+#   alice@example.test  alice-local-pass   owner of acme
+#   bob@example.test    bob-local-pass     viewer of acme, editor of globex
+#   carol@example.test  carol-local-pass   editor of acme
+#   dave@example.test   dave-local-pass    owner of globex
+#
+# The hashes are bcrypt with cost 10 (htpasswd -bnBC 10 "" <password> | tr -d ':\n').
+
+# The address browsers use. Tokens carry it as "iss", and the API compares it with
+# RFF_AUTH_ISSUER. Inside the compose network Dex is http://dex:5556/dex.
+issuer: http://127.0.0.1:5556/dex
+
+# Keys, sessions and codes are lost when the container stops; a restart signs with
+# new keys, so every earlier token stops verifying.
+storage:
+  type: memory
+
+web:
+  http: 0.0.0.0:5556
+
+# Health endpoints only (/healthz/ready for the compose healthcheck); not published.
+telemetry:
+  http: 0.0.0.0:5558
+
+logger:
+  level: info
+  format: text
+
+oauth2:
+  responseTypes: [code]
+  # No password grant: Dex cannot limit grant types per client, so with it any
+  # client could trade a password for a token. Sign-in is the code flow only.
+  grantTypes: [authorization_code, refresh_token]
+  skipApprovalScreen: true
+  # Applies to every client: an authorization request without an S256 code
+  # challenge is refused.
+  pkce:
+    enforce: true
+    codeChallengeMethodsSupported: [S256]
+
+enablePasswordDB: true
+
+# Every user sets userID. The token's "sub" encodes it with the connector id
+# "local", and the seed computes the same subject (apps/api/src/seed/dex-subject.ts).
+# A user without userID would get the subject of an empty id, shared with every
+# other such user.
+staticPasswords:
+  - email: alice@example.test
+    hash: '$2y$10$L4a/KChfbd3/Y8QrmyBBpOkTA8WzFwcuQosnjqocNFow8Uz/FI7LS'
+    username: alice
+    name: Alice
+    userID: 7d1c2b0e-5f43-4e1a-9a55-0c6d1f0a1001
+  - email: bob@example.test
+    hash: '$2y$10$EPXCRu6UUNYcBrzq5/01huFscKYrso2oQjDeuCdoOXog7IwfjTADu'
+    username: bob
+    name: Bob
+    userID: 7d1c2b0e-5f43-4e1a-9a55-0c6d1f0a1002
+  - email: carol@example.test
+    hash: '$2y$10$i9c5U2bM.p91rFJZcu3ym.TZbJX0gcfVDtlmf5HG9a0jkkbcQ.zF.'
+    username: carol
+    name: Carol
+    userID: 7d1c2b0e-5f43-4e1a-9a55-0c6d1f0a1003
+  - email: dave@example.test
+    hash: '$2y$10$5vlHFsMq0gDlT0krLxuuHu46fzclrXJDkIOehftgPxuXM8M9YQlii'
+    username: dave
+    name: Dave
+    userID: 7d1c2b0e-5f43-4e1a-9a55-0c6d1f0a1004
+
+staticClients:
+  # The dashboard signs users in with the authorization code flow and PKCE.
+  - id: rff-dashboard
+    name: Feature flags dashboard
+    secret: dashboard-local-secret
+    redirectURIs:
+      - http://127.0.0.1:3100/auth/callback
+  # The API's audience. The dashboard asks for the scope
+  # audience:server:client_id:rff-api, and because rff-api trusts it, the access
+  # token's "aud" then holds rff-api as well as rff-dashboard.
+  - id: rff-api
+    name: Feature flags API
+    secret: api-local-secret
+    trustedPeers: [rff-dashboard]

@@ -9,6 +9,8 @@
 # Never sent, even inside an allowed directory.
 **/node_modules
 **/dist
+**/.next
+**/next-env.d.ts
 **/coverage
 **/.vitest
 **/*.tsbuildinfo

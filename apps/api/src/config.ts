@@ -71,6 +71,14 @@ export interface MigrateConfig {
   readonly connectDeadlineMs: number;
 }
 
+export interface SeedConfig {
+  /** postgres:// URL of the database superuser that writes the demo data. */
+  readonly url: string;
+  /** The issuer of the demo users' tokens, exactly as Dex puts it in "iss". */
+  readonly issuer: string;
+  readonly connectDeadlineMs: number;
+}
+
 export type Env = Readonly<Record<string, string | undefined>>;
 
 /** Segments of letters, digits, _ and - joined by ":", such as rff or rff_test_0a1b:stream. */
@@ -125,6 +133,17 @@ export function loadMigrateConfig(env: Env): MigrateConfig {
   const config: MigrateConfig = {
     url: read.postgresUrl('RFF_MIGRATE_DATABASE_URL'),
     appPassword: read.secret('RFF_APP_DB_PASSWORD'),
+    connectDeadlineMs: read.integer('RFF_DB_CONNECT_DEADLINE_MS', 30_000, 0, 600_000),
+  };
+  read.done();
+  return config;
+}
+
+export function loadSeedConfig(env: Env): SeedConfig {
+  const read = new Reader(env);
+  const config: SeedConfig = {
+    url: read.postgresUrl('RFF_SEED_DATABASE_URL'),
+    issuer: read.string('RFF_SEED_ISSUER'),
     connectDeadlineMs: read.integer('RFF_DB_CONNECT_DEADLINE_MS', 30_000, 0, 600_000),
   };
   read.done();

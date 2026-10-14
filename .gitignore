@@ -7,3 +7,5 @@ coverage/
 !.env.example
 .DS_Store
 npm-debug.log*
+.next/
+next-env.d.ts

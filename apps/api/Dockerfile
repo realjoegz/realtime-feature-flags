@@ -1,5 +1,5 @@
-# The API image. compose.yaml runs it as the two API replicas and, with another
-# command, as the one-shot migrate service. Build from the repository root:
+# The API image. compose.yaml runs it as the two API replicas and, with other
+# commands, as the one-shot migrate and seed services. Build from the repository root:
 #
 #   docker build --file apps/api/Dockerfile --tag rff-api:local .
 #

@@ -1,0 +1,27 @@
+{
+  "name": "@rff/dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Next.js dashboard: sign-in through the identity provider, flags and audit log of each tenant.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": "24.13.0"
+  },
+  "scripts": {
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "typecheck": "NEXT_TELEMETRY_DISABLED=1 next typegen && tsc -p tsconfig.json",
+    "start": "next start"
+  },
+  "dependencies": {
+    "jose": "6.2.12",
+    "next": "16.4.0",
+    "openid-client": "6.8.8",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0"
+  }
+}

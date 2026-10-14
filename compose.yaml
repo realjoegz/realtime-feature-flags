@@ -1,8 +1,10 @@
-# Local stack: PostgreSQL, Redis, a one-shot migration run and two API replicas.
+# Local stack: PostgreSQL, Redis, Dex, one-shot migration and seed runs, two API
+# replicas and the dashboard.
 #
-# Every credential in this file is a local development value, and every port is
-# published on 127.0.0.1 only. The API tests use the same Postgres and Redis and the
-# same default passwords (apps/api/test/harness/settings.ts).
+# Every credential in this file, and in dex/local-demo-config.yaml, is a local
+# development value, and every port is published on 127.0.0.1 only. The API tests
+# use the same Postgres and Redis and the same default passwords
+# (apps/api/test/harness/settings.ts).
 #
 # Migration 0001 sets rff_app's password, and a database applies 0001 only once. To
 # change the password, change RFF_APP_DB_PASSWORD and RFF_DATABASE_URL together and
@@ -12,19 +14,24 @@
 # the same.
 #
 #   docker compose up --build --detach --wait   # whole stack, then scripts/demo.sh
+#                                               # dashboard: http://127.0.0.1:3100
 #   docker compose up --detach --wait postgres redis   # what npm run verify needs
 #   docker compose down --volumes
 
 name: rff
 
 # The API containers get the app role's credentials and nothing else. Tokens are
-# verified against Dex, which joins this file in a later step: the issuer is the
-# address browsers use, and the key set is fetched over the compose network. The
-# key set is fetched on the first request with a token, so the API starts without it.
+# verified against Dex: the issuer is the address browsers use, and the key set is
+# fetched over the compose network. The key set is fetched on the first request
+# with a token, so the API starts without Dex.
 # Both replicas use one Redis prefix (the default, rff): a flag write on either one
 # publishes a notification that wakes the SDK streams on both, and they share the
 # snapshot cache. Each replica also reads, every RFF_SAFETY_POLL_MS, the version of
 # every tenant it has open streams for, so a lost notification is found in Postgres.
+# Here the poll runs every 30 s instead of the default 5 s. scripts/demo.sh reads
+# this value and saves two changes 3 s apart, each of which must reach the other
+# replica within 2 s: at most one poll round falls inside those two windows, so only
+# Redis delivers both in time.
 x-api-environment: &api-environment
   RFF_DATABASE_URL: postgres://rff_app:rff-app-local@postgres:5432/rff
   RFF_HTTP_HOST: 0.0.0.0
@@ -33,10 +40,10 @@ x-api-environment: &api-environment
   RFF_AUTH_JWKS_URL: http://dex:5556/dex/keys
   RFF_AUTH_AUDIENCE: rff-api
   RFF_REDIS_URL: redis://redis:6379
-  RFF_SAFETY_POLL_MS: '5000'
+  RFF_SAFETY_POLL_MS: '30000'
 
 # Shared by api-1 and api-2. The image is built by the migrate service below and is
-# never pulled, because no registry has it.
+# never pulled, because no registry has it. The seed service runs the same image.
 x-api: &api
   image: rff-api:local
   pull_policy: never
@@ -117,6 +124,48 @@ services:
         condition: service_healthy
     restart: 'no'
 
+  # Writes the demo tenants acme and globex, the users of dex/local-demo-config.yaml
+  # with their memberships, a few flags and one SDK key per tenant
+  # (apps/api/src/seed/demo-data.ts), as the superuser, and exits. A run changes
+  # nothing that is already there, so every "up" runs it again.
+  seed:
+    image: rff-api:local
+    pull_policy: never
+    init: true
+    read_only: true
+    command: ['node', 'dist/seed-main.js']
+    environment:
+      RFF_SEED_DATABASE_URL: postgres://postgres:rff-admin-local@postgres:5432/rff
+      RFF_SEED_ISSUER: http://127.0.0.1:5556/dex
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: 'no'
+
+  # The identity provider: four static users, the dashboard's client and the API's
+  # audience (dex/local-demo-config.yaml). Its storage is in memory, so a restart
+  # signs with new keys and every earlier session has to sign in again.
+  dex:
+    image: ghcr.io/dexidp/dex:v2.46.0
+    command: ['dex', 'serve', '/etc/dex/config.yaml']
+    read_only: true
+    # The image's entrypoint writes a copy of the configuration under /tmp.
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./dex/local-demo-config.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - 127.0.0.1:5556:5556
+    healthcheck:
+      # The image has busybox wget and no curl. 5558 is the telemetry port.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:5558/healthz/ready']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
+
   api-1:
     <<: *api
     environment:
@@ -132,6 +181,49 @@ services:
       RFF_INSTANCE: api-2
     ports:
       - 127.0.0.1:4002:4000
+
+  # The dashboard's server signs users in through Dex and calls api-1 with each
+  # user's access token; the browser talks only to the dashboard.
+  dashboard:
+    build:
+      context: .
+      dockerfile: apps/dashboard/Dockerfile
+    image: rff-dashboard:local
+    init: true
+    read_only: true
+    environment:
+      RFF_API_URL: http://api-1:4000
+      # Tokens name this issuer, and browsers are sent to it to sign in. The server
+      # reaches the same Dex at RFF_OIDC_INTERNAL_URL.
+      RFF_OIDC_ISSUER: http://127.0.0.1:5556/dex
+      RFF_OIDC_INTERNAL_URL: http://dex:5556
+      RFF_OIDC_CLIENT_ID: rff-dashboard
+      RFF_OIDC_CLIENT_SECRET: dashboard-local-secret
+      RFF_OIDC_REDIRECT_URI: http://127.0.0.1:3100/auth/callback
+      RFF_OIDC_API_AUDIENCE: rff-api
+      # The keys of the session and sign-in cookies are derived from it.
+      RFF_SESSION_SECRET: rff-dashboard-local-session-secret-0000000
+      # Docker sets HOSTNAME to the container id; the server listens on every address.
+      HOSTNAME: 0.0.0.0
+      PORT: '3100'
+    ports:
+      - 127.0.0.1:3100:3100
+    depends_on:
+      dex:
+        condition: service_healthy
+      api-1:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      # The signed-out page reads no session and calls neither Dex nor the API.
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:3100/signed-out']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
 
 volumes:
   postgres-data:
