@@ -5,6 +5,7 @@ import { withConnectRetry } from '../../src/database/retry.js';
 import { MIGRATIONS_DIR, migrate, readMigrations } from '../../src/migrator.js';
 import type { HarnessContext } from './context.js';
 import { connectRedis, removeKeysWithPrefix } from './redis.js';
+import { RunKeysError, runKeyProblems } from './redis-keys.js';
 import { createDatabase, dropAbandonedRuns, dropRun, runPrefix } from './runs.js';
 import { harnessSettings, withCredentials, withDatabase } from './settings.js';
 import { SharedRolesChangedError, sharedRoleProblems } from './shared-roles.js';
@@ -80,16 +81,25 @@ export default async function setup(project: TestProject): Promise<() => Promise
     throw error;
   }
 
-  // Checks the shared roles once more while the run's database still exists, then
-  // removes the run, and fails the run if the roles changed while it ran.
+  // Checks the shared roles once more while the run's database still exists, and
+  // every key the run left in Redis (redis-keys.ts), then removes the run. It fails
+  // the run if the roles changed while it ran or a key is not a tenant-scoped entry.
   return async (): Promise<void> => {
     let problems: string[];
+    let keyProblems: string[];
     try {
       problems = await sharedRoleProblems(adminUrl, appUrl);
+      const client = await connectRedis(settings.redisUrl);
+      try {
+        keyProblems = await runKeyProblems(client, prefix);
+      } finally {
+        client.destroy();
+      }
     } finally {
       await removeRun();
     }
     if (problems.length > 0) throw new SharedRolesChangedError('At the end of the run', problems);
+    if (keyProblems.length > 0) throw new RunKeysError(prefix, keyProblems);
   };
 }
 

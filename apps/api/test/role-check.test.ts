@@ -12,7 +12,7 @@ import {
   type ScratchRole,
 } from './harness/context.js';
 import { ident } from './harness/settings.js';
-import { UNUSED_AUTH } from './support/api.js';
+import { apiConfig, UNUSED_AUTH } from './support/api.js';
 
 // The API refuses to start as a role that row-level security does not bind. Each case
 // connects as a role with one such privilege to a scratch database and reads the
@@ -99,13 +99,8 @@ async function reportFor(url: string): Promise<{ role: string; problems: readonl
 }
 
 function configFor(url: string): Config {
-  return {
-    http: { host: '127.0.0.1', port: 0 },
-    instance: 'role-check',
-    database: { url, poolMax: 2, connectDeadlineMs: 5000 },
-    auth: { ...UNUSED_AUTH, audience: 'rff-api' },
-    stream: { heartbeatMs: 15_000 },
-  };
+  const config = apiConfig(url, UNUSED_AUTH, 'role-check');
+  return { ...config, database: { ...config.database, poolMax: 2 } };
 }
 
 describe('start-up refuses a privileged database role', () => {

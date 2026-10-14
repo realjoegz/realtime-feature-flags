@@ -5,14 +5,10 @@ import { writeAudit } from '../audit/audit-log.js';
 import type { MemberScope } from '../auth/request-auth.js';
 import { TenantDatabase, type TenantClient } from '../database/tenant-database.js';
 import { notFound } from '../http/errors.js';
-import {
-  bumpVersion,
-  FLAG_COLUMNS,
-  flagFromRow,
-  type FlagRow,
-  readSnapshot,
-} from './flag-store.js';
-import { FLAGS_NOTIFIER, type FlagsNotifier } from './notifier.js';
+import { SnapshotReader } from '../stream/snapshot-reader.js';
+import { bumpVersion, FLAG_COLUMNS, flagFromRow, type FlagRow } from './flag-store.js';
+import { FlagsCache } from './flags-cache.js';
+import { FLAGS_NOTIFIER, type FlagsChange, type FlagsNotifier } from './notifier.js';
 
 /** What a client may set on a flag. The key comes from the path or the body, the salt from here. */
 export interface FlagSettings {
@@ -35,7 +31,9 @@ export function newSalt(): string {
 
 // Every flag write is one withTenant transaction: the version bump first, then the
 // change, then its audit row carrying the new version. Anything that fails inside
-// rolls all three back. The notifier runs only after COMMIT.
+// rolls all three back. Only after COMMIT does the write delete the cache entry of
+// the version before it and notify every instance; neither can fail the write.
+// GET /flags and POST /evaluate read through SnapshotReader, and so the cache.
 @Injectable()
 export class FlagsService {
   private readonly logger = new Logger('Flags');
@@ -43,12 +41,12 @@ export class FlagsService {
   constructor(
     private readonly db: TenantDatabase,
     @Inject(FLAGS_NOTIFIER) private readonly notifier: FlagsNotifier,
+    private readonly reader: SnapshotReader,
+    private readonly cache: FlagsCache,
   ) {}
 
   async list(member: MemberScope): Promise<{ version: number; flags: readonly Flag[] }> {
-    const snapshot = await this.db.withTenant(member, (client) =>
-      readSnapshot(client, member.tenantId),
-    );
+    const snapshot = await this.reader.current(member);
     if (snapshot === null) throw notFound();
     return { version: snapshot.version, flags: snapshot.flags };
   }
@@ -167,15 +165,23 @@ export class FlagsService {
       if (version === null) throw notFound();
       return { version, flag: await change(client, version) };
     });
-    try {
-      await this.notifier.flagsChanged({ tenantId: member.tenantId, version: result.version });
-    } catch (error) {
-      // The change is committed; a client that misses this notification finds the
-      // new version on its next read.
-      const message = error instanceof Error ? error.message : String(error);
-      this.logger.warn(`notifying version ${result.version} failed: ${message}`);
-    }
+    await Promise.all([
+      // FlagsCache logs its own failures and never throws.
+      this.cache.forget(member.tenantId, result.version - 1),
+      this.notify({ tenantId: member.tenantId, version: result.version }),
+    ]);
     return result;
+  }
+
+  private async notify(change: FlagsChange): Promise<void> {
+    try {
+      await this.notifier.flagsChanged(change);
+    } catch (error) {
+      // The change is committed; a stream that misses this notification finds the
+      // new version at the next safety poll or on its next connection.
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`notifying version ${change.version} failed: ${message}`);
+    }
   }
 }
 

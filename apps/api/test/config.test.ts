@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { ConfigError, describeDatabaseUrl, loadConfig, loadMigrateConfig } from '../src/config.js';
+import {
+  ConfigError,
+  describeDatabaseUrl,
+  describeRedisUrl,
+  loadConfig,
+  loadMigrateConfig,
+} from '../src/config.js';
 
 const url = 'postgres://rff_app:secret@db.internal:5432/rff';
+const redisUrl = 'redis://redis:6379';
 const auth = {
   RFF_AUTH_ISSUER: 'http://127.0.0.1:5556/dex',
   RFF_AUTH_JWKS_URL: 'http://dex:5556/dex/keys',
+  RFF_REDIS_URL: redisUrl,
 };
 
 function problemsOf(load: () => unknown): readonly string[] {
@@ -28,7 +36,8 @@ describe('configuration from the environment', () => {
         jwksUrl: 'http://dex:5556/dex/keys',
         audience: 'rff-api',
       },
-      stream: { heartbeatMs: 15_000 },
+      stream: { heartbeatMs: 15_000, safetyPollMs: 5000 },
+      redis: { url: redisUrl, prefix: 'rff', connectDeadlineMs: 30_000 },
     });
     expect(
       loadConfig({
@@ -40,12 +49,16 @@ describe('configuration from the environment', () => {
         RFF_DB_POOL_MAX: '3',
         RFF_DB_CONNECT_DEADLINE_MS: '0',
         RFF_STREAM_HEARTBEAT_MS: '250',
+        RFF_SAFETY_POLL_MS: '1000',
+        RFF_REDIS_PREFIX: 'rff_test_01:stream-a1',
+        RFF_REDIS_CONNECT_DEADLINE_MS: '0',
       }),
     ).toMatchObject({
       http: { host: '0.0.0.0', port: 4002 },
       database: { poolMax: 3, connectDeadlineMs: 0 },
       auth: { audience: 'other-api' },
-      stream: { heartbeatMs: 250 },
+      stream: { heartbeatMs: 250, safetyPollMs: 1000 },
+      redis: { prefix: 'rff_test_01:stream-a1', connectDeadlineMs: 0 },
     });
   });
 
@@ -57,6 +70,7 @@ describe('configuration from the environment', () => {
           RFF_DB_POOL_MAX: '0',
           RFF_DB_CONNECT_DEADLINE_MS: '1e3',
           RFF_STREAM_HEARTBEAT_MS: '5',
+          RFF_SAFETY_POLL_MS: '0',
         }),
       ),
     ).toEqual([
@@ -67,6 +81,8 @@ describe('configuration from the environment', () => {
       'RFF_AUTH_ISSUER is required',
       'RFF_AUTH_JWKS_URL is required',
       'RFF_STREAM_HEARTBEAT_MS must be an integer from 10 to 600000, got "5"',
+      'RFF_SAFETY_POLL_MS must be an integer from 10 to 600000, got "0"',
+      'RFF_REDIS_URL is required',
     ]);
   });
 
@@ -101,6 +117,24 @@ describe('configuration from the environment', () => {
     );
   });
 
+  it('accepts only redis URLs that name a host, and prefixes of segments joined by ":"', () => {
+    const env = { ...auth, RFF_DATABASE_URL: url };
+    expect(problemsOf(() => loadConfig({ ...env, RFF_REDIS_URL: 'http://redis:6379' }))).toEqual([
+      'RFF_REDIS_URL must start with redis:// or rediss://',
+    ]);
+    expect(problemsOf(() => loadConfig({ ...env, RFF_REDIS_URL: 'redis' }))).toEqual([
+      'RFF_REDIS_URL is not a URL',
+    ]);
+    expect(loadConfig({ ...env, RFF_REDIS_URL: 'rediss://cache.internal:6380' }).redis.url).toBe(
+      'rediss://cache.internal:6380',
+    );
+    for (const prefix of ['rff:', ':rff', 'a::b', 'rff test', 'flags*', 'a{b}']) {
+      expect(problemsOf(() => loadConfig({ ...env, RFF_REDIS_PREFIX: prefix }))).toEqual([
+        `RFF_REDIS_PREFIX must be one or more segments of letters, digits, _ and - joined by ":", got "${prefix}"`,
+      ]);
+    }
+  });
+
   it('the migrate command needs the superuser URL and the app password', () => {
     expect(problemsOf(() => loadMigrateConfig({}))).toEqual([
       'RFF_MIGRATE_DATABASE_URL is required',
@@ -120,10 +154,14 @@ describe('configuration from the environment', () => {
     );
   });
 
-  it('a database URL is logged without its password', () => {
+  it('a database or Redis URL is logged without its password', () => {
     expect(describeDatabaseUrl(url)).toBe('rff_app@db.internal:5432/rff');
     expect(describeDatabaseUrl(url)).not.toContain('secret');
     expect(describeDatabaseUrl('postgres://h/db')).toBe('(default user)@h:5432/db');
     expect(describeDatabaseUrl('::')).toBe('(unparseable URL)');
+    expect(describeRedisUrl('redis://user:secret@cache.internal:6380/0')).toBe(
+      'cache.internal:6380',
+    );
+    expect(describeRedisUrl('redis://cache.internal')).toBe('cache.internal:6379');
   });
 });

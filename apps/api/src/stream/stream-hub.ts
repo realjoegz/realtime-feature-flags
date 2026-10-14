@@ -14,16 +14,25 @@ import { SnapshotReader } from './snapshot-reader.js';
 // The fan-out of GET /sdk/stream on one instance. It keeps, per tenant, the open
 // streams and the last version each one was sent. A wake-up for a tenant reads the
 // tenant's version, and its snapshot when a stream is behind, and sends the
-// snapshot to every stream of that tenant that is behind. A stream that opens wakes
-// its tenant too, so a client that missed versions while it was away gets the
-// current snapshot at once.
+// snapshot to every stream of that tenant that is behind. Four things wake a
+// tenant: a stream that opens, so a client that missed versions while it was away
+// gets the current snapshot at once; a change notification from Redis (ChangeBus);
+// the change bus reconnecting, which wakes every tenant with open streams because
+// notifications sent while it was down are lost; and the safety poll (SafetyPoll),
+// which wakes every such tenant at an interval.
 //
 // At most one read runs per tenant. A wake-up that arrives while it runs is not
 // dropped: it marks the tenant, and exactly one more read follows, however many
-// wake-ups arrived. A failed read is logged; the next wake-up reads again.
+// wake-ups arrived. A failed read is logged; the next wake-up reads again, at the
+// latest the next poll.
 
 /** The cursor of a client that holds no version yet: any version is above it. */
 export const NO_CURSOR = -1;
+
+/** What woke a tenant: a stream opening, a notification, the bus reconnecting, the poll. */
+export type WakeCause = 'connect' | 'notification' | 'ready' | 'poll';
+
+export type Deliveries = Record<WakeCause, number>;
 
 interface StreamClient {
   /** The version of the last snapshot sent on this connection, or its cursor. */
@@ -37,6 +46,8 @@ interface TenantStreams {
   reading: boolean;
   /** A wake-up arrived during that read. */
   again: boolean;
+  /** The cause of the latest wake-up, which the next read is counted under. */
+  cause: WakeCause;
 }
 
 @Injectable()
@@ -47,6 +58,11 @@ export class StreamHub implements BeforeApplicationShutdown {
   private readonly closing = new ReplaySubject<void>(1);
   private readonly reads = new Set<Promise<void>>();
   private closed = false;
+  /**
+   * Snapshot events sent, one per stream, by the cause of the wake-up whose read
+   * found them. Wake-ups that arrive during one read count under the latest.
+   */
+  readonly delivered: Deliveries = { connect: 0, notification: 0, ready: 0, poll: 0 };
 
   constructor(
     @Inject(CONFIG) private readonly config: Config,
@@ -72,10 +88,11 @@ export class StreamHub implements BeforeApplicationShutdown {
     return merge(snapshots, heartbeats).pipe(takeUntil(this.closing));
   }
 
-  /** A flag write in tenantId has committed: bring the tenant's open streams up to date. */
-  wake(tenantId: string): void {
+  /** tenantId may have changed: bring its open streams on this instance up to date. */
+  wake(tenantId: string, cause: WakeCause): void {
     const streams = this.tenants.get(tenantId);
     if (streams === undefined || this.closed) return;
+    streams.cause = cause;
     if (streams.reading) {
       streams.again = true;
       return;
@@ -85,9 +102,21 @@ export class StreamHub implements BeforeApplicationShutdown {
     this.reads.add(read);
   }
 
+  /** Wakes every tenant that has an open stream on this instance. */
+  wakeAll(cause: WakeCause): void {
+    for (const tenantId of this.tenantsWithStreams()) this.wake(tenantId, cause);
+  }
+
+  /** The tenants with at least one open stream on this instance. */
+  tenantsWithStreams(): string[] {
+    return [...this.tenants].flatMap(([tenantId, streams]) =>
+      streams.clients.size > 0 ? [tenantId] : [],
+    );
+  }
+
   /** A stream of tenantId has opened. It gets the snapshot at once when it is behind. */
   protected connected(tenantId: string): void {
-    this.wake(tenantId);
+    this.wake(tenantId, 'connect');
   }
 
   /**
@@ -109,7 +138,7 @@ export class StreamHub implements BeforeApplicationShutdown {
   private join(tenantId: string, client: StreamClient): void {
     let streams = this.tenants.get(tenantId);
     if (streams === undefined) {
-      streams = { clients: new Set(), reading: false, again: false };
+      streams = { clients: new Set(), reading: false, again: false, cause: 'connect' };
       this.tenants.set(tenantId, streams);
     }
     streams.clients.add(client);
@@ -126,6 +155,7 @@ export class StreamHub implements BeforeApplicationShutdown {
     try {
       do {
         streams.again = false;
+        const cause = streams.cause;
         const oldest = Math.min(...Array.from(streams.clients, (client) => client.lastSent));
         let read;
         try {
@@ -136,7 +166,7 @@ export class StreamHub implements BeforeApplicationShutdown {
           this.logger.warn(`reading tenant ${tenantId} for its streams failed: ${message}`);
           continue;
         }
-        if (read?.snapshot) this.send(streams, read.snapshot);
+        if (read?.snapshot) this.send(streams, read.snapshot, cause);
       } while (streams.again && streams.clients.size > 0 && !this.closed);
     } finally {
       streams.reading = false;
@@ -146,7 +176,7 @@ export class StreamHub implements BeforeApplicationShutdown {
     }
   }
 
-  private send(streams: TenantStreams, snapshot: Snapshot): void {
+  private send(streams: TenantStreams, snapshot: Snapshot, cause: WakeCause): void {
     // Serialized once for every stream of the tenant. The id is the version, which
     // the client sends back as Last-Event-ID when it reconnects.
     const event: MessageEvent = {
@@ -162,6 +192,7 @@ export class StreamHub implements BeforeApplicationShutdown {
       if (client.lastSent < snapshot.version) {
         client.lastSent = snapshot.version;
         client.send(event);
+        this.delivered[cause] += 1;
       }
     }
   }

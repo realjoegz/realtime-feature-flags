@@ -21,6 +21,7 @@
     "@rff/core": "0.0.0",
     "jose": "6.2.12",
     "pg": "8.23.1",
+    "redis": "6.3.0",
     "reflect-metadata": "0.2.2",
     "rxjs": "7.8.2"
   },
@@ -29,7 +30,6 @@
     "@rff/sdk": "0.0.0",
     "@swc/core": "1.16.18",
     "@types/pg": "8.23.1",
-    "redis": "6.3.0",
     "unplugin-swc": "2.0.0"
   }
 }

@@ -5,8 +5,10 @@ import type pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Access } from '../src/auth/access.js';
 import type { MemberScope } from '../src/auth/request-auth.js';
+import { FlagsCache } from '../src/flags/flags-cache.js';
 import { FlagsService } from '../src/flags/flags.service.js';
 import { FLAGS_NOTIFIER, type FlagsNotifier } from '../src/flags/notifier.js';
+import { SnapshotReader } from '../src/stream/snapshot-reader.js';
 import { PG_POOL } from '../src/tokens.js';
 import { TenantDatabase, type MemberRole } from '../src/database/tenant-database.js';
 import { reachableRelations, type Relation } from './isolation/catalogue.js';
@@ -378,9 +380,13 @@ describe('tenant isolation at the routes', () => {
     const oracle = await startEnvironment('isooracle', {
       override: (builder) =>
         builder.overrideProvider(FlagsService).useFactory({
-          factory: (db: TenantDatabase, notifier: FlagsNotifier) =>
-            new FlagsWithOwnNotFound(db, notifier),
-          inject: [TenantDatabase, FLAGS_NOTIFIER],
+          factory: (
+            db: TenantDatabase,
+            notifier: FlagsNotifier,
+            reader: SnapshotReader,
+            cache: FlagsCache,
+          ) => new FlagsWithOwnNotFound(db, notifier, reader, cache),
+          inject: [TenantDatabase, FLAGS_NOTIFIER, SnapshotReader, FlagsCache],
         }),
     });
     try {

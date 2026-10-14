@@ -7,16 +7,11 @@ import { AppModule } from '../src/app.module.js';
 import { type Config } from '../src/config.js';
 import { PG_POOL } from '../src/tokens.js';
 import { harness } from './harness/context.js';
-import { UNUSED_AUTH } from './support/api.js';
+import { apiConfig, UNUSED_AUTH } from './support/api.js';
 
 function config(instance: string): Config {
-  return {
-    http: { host: '127.0.0.1', port: 0 },
-    instance,
-    database: { url: harness().appUrl, poolMax: 2, connectDeadlineMs: 5000 },
-    auth: { ...UNUSED_AUTH, audience: 'rff-api' },
-    stream: { heartbeatMs: 15_000 },
-  };
+  const base = apiConfig(harness().appUrl, UNUSED_AUTH, instance);
+  return { ...base, database: { ...base.database, poolMax: 2 } };
 }
 
 async function listen(app: INestApplication): Promise<string> {

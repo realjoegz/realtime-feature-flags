@@ -7,6 +7,7 @@ import { TokenVerifier } from './auth/token-verifier.js';
 import { type Config } from './config.js';
 import { PoolCloser, poolProvider } from './database/database.providers.js';
 import { TenantDatabase } from './database/tenant-database.js';
+import { FlagsCache } from './flags/flags-cache.js';
 import { FlagsController } from './flags/flags.controller.js';
 import { FlagsService } from './flags/flags.service.js';
 import { FLAGS_NOTIFIER } from './flags/notifier.js';
@@ -15,7 +16,9 @@ import { HealthService } from './health/health.service.js';
 import { MeController } from './me/me.controller.js';
 import { MembersController } from './members/members.controller.js';
 import { SdkKeysController } from './sdk-keys/sdk-keys.controller.js';
-import { InProcessNotifier } from './stream/in-process-notifier.js';
+import { RedisConnection } from './redis/redis-connection.js';
+import { ChangeBus } from './stream/change-bus.js';
+import { SafetyPoll } from './stream/safety-poll.js';
 import { SnapshotReader } from './stream/snapshot-reader.js';
 import { StreamController } from './stream/stream.controller.js';
 import { StreamHub } from './stream/stream-hub.js';
@@ -48,11 +51,15 @@ export class AppModule {
         { provide: APP_GUARD, useClass: AccessGuard },
         RouteAccessCheck,
         FlagsService,
+        RedisConnection,
+        FlagsCache,
         SnapshotReader,
         StreamHub,
-        // After a flag write commits, the notifier wakes this instance's streams of
-        // that tenant.
-        { provide: FLAGS_NOTIFIER, useClass: InProcessNotifier },
+        ChangeBus,
+        SafetyPoll,
+        // After a flag write commits, the change bus tells every instance, this one
+        // included, to bring its streams of that tenant up to date.
+        { provide: FLAGS_NOTIFIER, useExisting: ChangeBus },
       ],
     };
   }

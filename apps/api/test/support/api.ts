@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { type INestApplication } from '@nestjs/common';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import type pg from 'pg';
@@ -6,25 +6,37 @@ import { createApp } from '../../src/app.js';
 import { AppModule } from '../../src/app.module.js';
 import { type Config } from '../../src/config.js';
 import { connectClient } from '../../src/database/connect.js';
-import { createMigratedDatabase, type MigratedDatabase } from '../harness/context.js';
+import { createMigratedDatabase, harness, type MigratedDatabase } from '../harness/context.js';
+import { connectRedis, type Redis, removeKeysWithPrefix } from '../harness/redis.js';
 import { createFixture, type Fixture, type FixtureUser } from '../isolation/fixture.js';
 import { AUDIENCE, type LocalIdp, startIdp } from './idp.js';
 
 // The API as the tests run it: a migrated database of its own, the isolation fixture
 // (tenants A and B) plus two users that fixture lacks, the local identity provider,
-// and the Nest app listening on 127.0.0.1 with rff_app's credentials.
+// and one or more Nest apps listening on 127.0.0.1 with rff_app's credentials. The
+// apps of one environment share its database and a Redis prefix of its own, as the
+// replicas of one deployment do.
+
+/** A Redis prefix under this run's, for one environment or app. */
+export function redisPrefixFor(label: string): string {
+  return `${harness().redisPrefix}:${label}-${randomBytes(3).toString('hex')}`;
+}
 
 export function apiConfig(
   databaseUrl: string,
   auth: { issuer: string; jwksUrl: string },
   instance = 'api-test',
+  redisPrefix = redisPrefixFor('app'),
 ): Config {
   return {
     http: { host: '127.0.0.1', port: 0 },
     instance,
-    database: { url: databaseUrl, poolMax: 4, connectDeadlineMs: 5000 },
+    // Two connections per app: most environments run two apps, and test files run in
+    // parallel, so concurrent test runs share the server's connection limit.
+    database: { url: databaseUrl, poolMax: 2, connectDeadlineMs: 5000 },
     auth: { ...auth, audience: AUDIENCE },
-    stream: { heartbeatMs: 15_000 },
+    stream: { heartbeatMs: 15_000, safetyPollMs: 5000 },
+    redis: { url: harness().redisUrl, prefix: redisPrefix, connectDeadlineMs: 5000 },
   };
 }
 
@@ -37,10 +49,12 @@ export const UNUSED_AUTH = {
 export interface RunningApi {
   readonly app: INestApplication;
   readonly base: string;
+  /** The instance name in the app's configuration. */
+  readonly instance: string;
   close(): Promise<void>;
 }
 
-export async function listen(app: INestApplication): Promise<RunningApi> {
+export async function listen(app: INestApplication, instance = 'api-test'): Promise<RunningApi> {
   try {
     await app.listen(0, '127.0.0.1');
   } catch (error) {
@@ -48,7 +62,7 @@ export async function listen(app: INestApplication): Promise<RunningApi> {
     throw error;
   }
   const { port } = app.getHttpServer().address() as { port: number };
-  return { app, base: `http://127.0.0.1:${port}`, close: () => app.close() };
+  return { app, base: `http://127.0.0.1:${port}`, instance, close: () => app.close() };
 }
 
 export interface AppChanges {
@@ -71,7 +85,7 @@ export async function startApi(
 ): Promise<RunningApi> {
   const configured = changes.configure?.(config) ?? config;
   if (changes.override === undefined && changes.controllers === undefined) {
-    return listen(await createApp(configured, { logger: false }));
+    return listen(await createApp(configured, { logger: false }), configured.instance);
   }
   const builder = Test.createTestingModule({
     imports: [AppModule.forRoot(configured)],
@@ -82,7 +96,10 @@ export async function startApi(
   }
   const changed = world === undefined ? builder : (changes.override?.(builder, world) ?? builder);
   const moduleRef = await changed.compile();
-  return listen(moduleRef.createNestApplication({ logger: false, forceCloseConnections: true }));
+  return listen(
+    moduleRef.createNestApplication({ logger: false, forceCloseConnections: true }),
+    configured.instance,
+  );
 }
 
 /** The fixture's users by what they can do. Each one can sign in except where noted. */
@@ -106,7 +123,12 @@ export interface People {
 export interface World {
   readonly fixture: Fixture;
   readonly people: People;
-  /** Empties every tenant table and inserts the fixture's rows and the extra users. */
+  /**
+   * Empties every tenant table and inserts the fixture's rows and the extra users.
+   * In an environment it also empties the environment's cache: the seed sets the
+   * versions back, and an entry for a version that is written again would not
+   * hold that version's flags.
+   */
   seed(admin: pg.ClientBase): Promise<void>;
 }
 
@@ -183,15 +205,31 @@ export interface Environment {
   /** Superuser on the environment's database. */
   readonly admin: pg.Client;
   readonly idp: LocalIdp;
+  /** The first app; apis holds every one, in the order of the changes. */
   readonly api: RunningApi;
+  readonly apis: readonly RunningApi[];
   readonly world: World;
-  /** Sends call as user (null: no Authorization header) and reads the whole reply. */
-  send(user: FixtureUser | null, call: Call): Promise<Reply>;
+  /** A Redis connection of the test's own. */
+  readonly redis: Redis;
+  /** The prefix every key and channel of the environment's apps starts with, before ":". */
+  readonly redisPrefix: string;
+  /**
+   * Sends call as user (null: no Authorization header) to apis[via], default the
+   * first, and reads the whole reply.
+   */
+  send(user: FixtureUser | null, call: Call, via?: number): Promise<Reply>;
   /** Sends call with this Authorization header value. */
-  sendWith(authorization: string | undefined, call: Call): Promise<Reply>;
+  sendWith(authorization: string | undefined, call: Call, via?: number): Promise<Reply>;
   /** The Authorization header value that send uses for user. */
   authorization(user: FixtureUser): Promise<string>;
-  close(): Promise<void>;
+  /** Deletes every key of the environment's apps, for a test that changes versions directly. */
+  clearCache(): Promise<void>;
+  /**
+   * Closes the apps and the connections. With clearCache, it then deletes the apps'
+   * keys: a control whose cache writes keys that are not tenant-scoped entries uses
+   * it, since the run's teardown reports any such key (harness/redis-keys.ts).
+   */
+  close(options?: { readonly clearCache?: boolean }): Promise<void>;
 }
 
 export async function request(base: string, call: Call, authorization?: string): Promise<Reply> {
@@ -213,22 +251,44 @@ export async function request(base: string, call: Call, authorization?: string):
   return { status: response.status, headers: Object.fromEntries(response.headers), text, body };
 }
 
-/** A migrated database seeded with the world, the local identity provider and the API. */
+/**
+ * A migrated database seeded with the world, the local identity provider and the
+ * API: one app, or one for each entry when changes is a list.
+ */
 export async function startEnvironment(
   label: string,
-  changes: AppChanges = {},
+  changes: AppChanges | readonly AppChanges[] = {},
 ): Promise<Environment> {
+  const perApp: readonly AppChanges[] = Array.isArray(changes) ? changes : [changes];
   const database = await createMigratedDatabase(label);
   const admin = await connectClient(database.adminUrl, 'rff-test-api');
-  const world = createWorld();
+  const redisPrefix = redisPrefixFor(label);
+  const redis = await connectRedis(harness().redisUrl);
+  const clearCache = async (): Promise<void> => {
+    await removeKeysWithPrefix(redis, `${redisPrefix}:`);
+  };
+  const base = createWorld();
+  const world: World = {
+    ...base,
+    async seed(client) {
+      await base.seed(client);
+      await clearCache();
+    },
+  };
   await world.seed(admin);
   const idp = await startIdp(world.fixture.users.shared.issuer);
-  let api: RunningApi;
+  const apis: RunningApi[] = [];
   try {
-    api = await startApi(apiConfig(database.appUrl, idp), changes, world);
+    for (const [index, appChanges] of perApp.entries()) {
+      const config = apiConfig(database.appUrl, idp, `${label}-${index + 1}`, redisPrefix);
+      // eslint-disable-next-line no-await-in-loop -- one app after another, in order
+      apis.push(await startApi(config, appChanges, world));
+    }
   } catch (error) {
+    await Promise.allSettled(apis.map((api) => api.close()));
     await idp.close();
     await admin.end();
+    redis.destroy();
     throw error;
   }
   const tokens = new Map<string, Promise<string>>();
@@ -241,23 +301,35 @@ export async function startEnvironment(
     }
     return token;
   };
+  const baseOf = (via = 0): string => {
+    const api = apis[via];
+    if (api === undefined) throw new Error(`the environment has no app ${via}`);
+    return api.base;
+  };
   return {
     database,
     admin,
     idp,
-    api,
+    api: apis[0] as RunningApi,
+    apis,
     world,
-    async send(user, call) {
-      return request(api.base, call, user === null ? undefined : `Bearer ${await tokenFor(user)}`);
+    redis,
+    redisPrefix,
+    async send(user, call, via) {
+      const authorization = user === null ? undefined : `Bearer ${await tokenFor(user)}`;
+      return request(baseOf(via), call, authorization);
     },
-    sendWith: (authorization, call) => request(api.base, call, authorization),
+    sendWith: (authorization, call, via) => request(baseOf(via), call, authorization),
     authorization: async (user) => `Bearer ${await tokenFor(user)}`,
-    async close() {
+    clearCache,
+    async close(options = {}) {
       try {
-        await api.close();
+        await Promise.all(apis.map((api) => api.close()));
+        if (options.clearCache === true) await clearCache();
       } finally {
         await idp.close();
         await admin.end();
+        redis.destroy();
       }
     },
   };

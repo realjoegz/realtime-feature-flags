@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 import type { TestProject } from 'vitest/node';
@@ -7,12 +7,17 @@ import { MIGRATIONS_DIR, readMigrations } from '../src/migrator.js';
 import { adminClient, harness, type HarnessContext } from './harness/context.js';
 import setup from './harness/global-setup.js';
 import { connectRedis, escapeGlob, removeKeysWithPrefix } from './harness/redis.js';
+import { RunKeysError, runKeyProblems } from './harness/redis-keys.js';
 import { createDatabase, dropAbandonedRuns, dropRun } from './harness/runs.js';
 import { ident, literal } from './harness/settings.js';
 
 // The test harness (harness/global-setup.ts) gives each run of the api project its own
 // database and Redis prefix, so concurrent runs against the one compose stack do not
 // see each other's data.
+
+/** A cache entry as the apps write it, with no flags. */
+const entry = (tenantId: string, version: number): string =>
+  JSON.stringify({ tenantId, version, flags: [] });
 
 describe('test harness', () => {
   it("this run's database is rff_test_<run id>, built by the migration runner from apps/api/migrations", async () => {
@@ -62,48 +67,112 @@ describe('test harness', () => {
     expect(escapeGlob('a*b?c[d]e\\')).toBe('a\\*b\\?c\\[d\\]e\\\\');
   });
 
-  it('another run gets its own database and prefix, and its teardown removes its databases, roles and keys but nothing of this run', async () => {
+  // DROP DATABASE waits for a checkpoint. While other test runs on the server create
+  // databases, a checkpoint has many new files to sync: with three runs at once, the
+  // teardown here took 41 s.
+  it(
+    'another run gets its own database and prefix, and its teardown removes its databases, roles and keys but nothing of this run',
+    { timeout: 120_000 },
+    async () => {
+      const run = harness();
+      let other: HarnessContext | undefined;
+      const project = {
+        provide: (_key: 'rff', value: HarnessContext) => {
+          other = value;
+        },
+      } as unknown as TestProject;
+      const teardown = await setup(project);
+      let tornDown = false;
+      const redis = await connectRedis(run.redisUrl);
+      const server = await connectClient(run.serverAdminUrl, 'rff-test-harness');
+      const mine = `${run.redisPrefix}:harness:${randomBytes(4).toString('hex')}`;
+      try {
+        if (other === undefined) throw new Error('global setup provided no context');
+        expect(other.runId).not.toBe(run.runId);
+        expect(other.database).toBe(`rff_test_${other.runId}`);
+        expect(other.redisPrefix).not.toBe(run.redisPrefix);
+
+        const suffix = randomBytes(3).toString('hex');
+        await createDatabase(server, `${other.database}_extra_${suffix}`);
+        await server.query(`CREATE ROLE ${ident(`${other.database}_role_${suffix}`)} NOLOGIN`);
+        // A probe key of the harness and a cache entry, which the teardown's key check
+        // accepts.
+        const tenantId = randomUUID();
+        const left = [
+          `${other.redisPrefix}:harness:a`,
+          `${other.redisPrefix}:env-0a1b2c:flags:${tenantId}:v1`,
+        ];
+        await redis.set(left[0]!, '1');
+        await redis.set(left[1]!, entry(tenantId, 1));
+        await redis.set(mine, 'this run');
+        expect(await namesUnder(server, other.database)).toEqual({ databases: 2, roles: 1 });
+
+        tornDown = true;
+        await teardown();
+
+        expect(await namesUnder(server, other.database)).toEqual({ databases: 0, roles: 0 });
+        expect(await redis.exists(left)).toBe(0);
+        expect(await redis.get(mine)).toBe('this run');
+        const own = await server.query('SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1', [
+          run.database,
+        ]);
+        expect(own.rowCount).toBe(1);
+      } finally {
+        if (!tornDown) await teardown();
+        await redis.del([mine]);
+        redis.destroy();
+        await server.end();
+      }
+    },
+  );
+
+  it("the teardown's key check reports every key under a run prefix, outside <run>:harness:, that is not <run>:<environment>:flags:<tenant>:v<version> or whose entry names another tenant or version, and accepts cache entries and the harness's probe keys", async () => {
     const run = harness();
-    let other: HarnessContext | undefined;
-    const project = {
-      provide: (_key: 'rff', value: HarnessContext) => {
-        other = value;
-      },
-    } as unknown as TestProject;
-    const teardown = await setup(project);
-    let tornDown = false;
+    // A run prefix of its own, under this run's probe keys.
+    const prefix = `${run.redisPrefix}:harness:${randomBytes(4).toString('hex')}`;
     const redis = await connectRedis(run.redisUrl);
-    const server = await connectClient(run.serverAdminUrl, 'rff-test-harness');
-    const mine = `${run.redisPrefix}:harness:${randomBytes(4).toString('hex')}`;
+    const tenantId = randomUUID();
+    const env = `${prefix}:env-0a1b2c`;
+    const keys: Record<string, string> = {
+      [`${prefix}:harness:probe`]: '1',
+      [`${env}:flags:${tenantId}:v0`]: entry(tenantId, 0),
+      [`${env}:flags:${tenantId}:v12`]: entry(tenantId, 12),
+      [`${env}:flags:v3`]: entry(tenantId, 3),
+      [`${env}:flags:${tenantId}:first`]: entry(tenantId, 3),
+      [`${env}:flags:${tenantId}:v03`]: entry(tenantId, 3),
+      [`${env}:changes`]: '1',
+      [`${prefix}:flags:${tenantId}:v3`]: entry(tenantId, 3),
+      [`${env}:flags:${tenantId}:v4`]: entry(randomUUID(), 4),
+      [`${env}:flags:${tenantId}:v5`]: entry(tenantId, 6),
+      [`${env}:flags:${tenantId}:v6`]: 'not json',
+    };
     try {
-      if (other === undefined) throw new Error('global setup provided no context');
-      expect(other.runId).not.toBe(run.runId);
-      expect(other.database).toBe(`rff_test_${other.runId}`);
-      expect(other.redisPrefix).not.toBe(run.redisPrefix);
-
-      const suffix = randomBytes(3).toString('hex');
-      await createDatabase(server, `${other.database}_extra_${suffix}`);
-      await server.query(`CREATE ROLE ${ident(`${other.database}_role_${suffix}`)} NOLOGIN`);
-      await redis.set(`${other.redisPrefix}:a`, '1');
-      await redis.set(`${other.redisPrefix}:b`, '2');
-      await redis.set(mine, 'this run');
-      expect(await namesUnder(server, other.database)).toEqual({ databases: 2, roles: 1 });
-
-      tornDown = true;
-      await teardown();
-
-      expect(await namesUnder(server, other.database)).toEqual({ databases: 0, roles: 0 });
-      expect(await redis.exists([`${other.redisPrefix}:a`, `${other.redisPrefix}:b`])).toBe(0);
-      expect(await redis.get(mine)).toBe('this run');
-      const own = await server.query('SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1', [
-        run.database,
-      ]);
-      expect(own.rowCount).toBe(1);
+      for (const [key, value] of Object.entries(keys)) {
+        // eslint-disable-next-line no-await-in-loop -- one key after another
+        await redis.set(key, value);
+      }
+      const problems = await runKeyProblems(redis, prefix);
+      const shape = 'is not <run>:<environment>:flags:<tenant>:v<version>';
+      const entryProblem = 'does not hold a snapshot of that tenant and version';
+      expect(problems).toEqual(
+        [
+          `${env}:flags:v3 ${shape}`,
+          `${env}:flags:${tenantId}:first ${shape}`,
+          `${env}:flags:${tenantId}:v03 ${shape}`,
+          `${env}:changes ${shape}`,
+          `${prefix}:flags:${tenantId}:v3 ${shape}`,
+          `${env}:flags:${tenantId}:v4 ${entryProblem}`,
+          `${env}:flags:${tenantId}:v5 ${entryProblem}`,
+          `${env}:flags:${tenantId}:v6 ${entryProblem}`,
+        ].toSorted(),
+      );
+      expect(new RunKeysError(prefix, problems).message).toBe(
+        `At the end of the run, 8 Redis keys under ${prefix} are not tenant-scoped cache entries:\n  ${problems.join('\n  ')}`,
+      );
+      expect(await runKeyProblems(redis, `${prefix}x`)).toEqual([]);
     } finally {
-      if (!tornDown) await teardown();
-      await redis.del([mine]);
+      await removeKeysWithPrefix(redis, `${prefix}:`);
       redis.destroy();
-      await server.end();
     }
   });
 

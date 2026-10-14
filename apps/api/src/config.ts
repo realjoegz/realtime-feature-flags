@@ -31,6 +31,26 @@ export interface StreamConfig {
    * receives no bytes for three intervals takes the connection for dead.
    */
   readonly heartbeatMs: number;
+  /**
+   * How often the instance reads the version of every tenant it has open streams
+   * for, so that a change whose notification was lost still reaches them. Null
+   * turns the poll off; loadConfig never does, only tests that leave notifications
+   * as the one path set it.
+   */
+  readonly safetyPollMs: number | null;
+}
+
+/** Redis: the change notifications between instances, and the snapshot cache. */
+export interface RedisConfig {
+  /** redis:// or rediss:// URL. */
+  readonly url: string;
+  /**
+   * Every key and channel of this deployment starts with the prefix and ":".
+   * Instances that serve the same database share it.
+   */
+  readonly prefix: string;
+  /** How long start-up keeps retrying a Redis that does not accept connections yet. */
+  readonly connectDeadlineMs: number;
 }
 
 export interface Config {
@@ -40,6 +60,7 @@ export interface Config {
   readonly database: DatabaseConfig;
   readonly auth: AuthConfig;
   readonly stream: StreamConfig;
+  readonly redis: RedisConfig;
 }
 
 export interface MigrateConfig {
@@ -51,6 +72,9 @@ export interface MigrateConfig {
 }
 
 export type Env = Readonly<Record<string, string | undefined>>;
+
+/** Segments of letters, digits, _ and - joined by ":", such as rff or rff_test_0a1b:stream. */
+export const REDIS_PREFIX = /^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$/;
 
 export class ConfigError extends Error {
   constructor(readonly problems: readonly string[]) {
@@ -79,6 +103,17 @@ export function loadConfig(env: Env): Config {
     },
     stream: {
       heartbeatMs: read.integer('RFF_STREAM_HEARTBEAT_MS', 15_000, 10, 600_000),
+      safetyPollMs: read.integer('RFF_SAFETY_POLL_MS', 5000, 10, 600_000),
+    },
+    redis: {
+      url: read.redisUrl('RFF_REDIS_URL'),
+      prefix: read.matching(
+        'RFF_REDIS_PREFIX',
+        'rff',
+        REDIS_PREFIX,
+        'one or more segments of letters, digits, _ and - joined by ":"',
+      ),
+      connectDeadlineMs: read.integer('RFF_REDIS_CONNECT_DEADLINE_MS', 30_000, 0, 600_000),
     },
   };
   read.done();
@@ -102,6 +137,16 @@ export function describeDatabaseUrl(url: string): string {
     const parsed = new URL(url);
     const user = decodeURIComponent(parsed.username) || '(default user)';
     return `${user}@${parsed.hostname}:${parsed.port || '5432'}${parsed.pathname}`;
+  } catch {
+    return '(unparseable URL)';
+  }
+}
+
+/** host:port of a Redis URL, without its credentials, for log lines and errors. */
+export function describeRedisUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname}:${parsed.port || '6379'}`;
   } catch {
     return '(unparseable URL)';
   }
@@ -150,6 +195,30 @@ class Reader {
       this.problems.push(`${name} must start with postgres:// or postgresql://`);
     } else if (parsed.hostname === '' || parsed.pathname.length < 2) {
       this.problems.push(`${name} must name a host and a database`);
+    }
+    return value;
+  }
+
+  matching(name: string, fallback: string, pattern: RegExp, description: string): string {
+    const value = this.string(name, fallback);
+    if (!pattern.test(value)) this.problems.push(`${name} must be ${description}, got "${value}"`);
+    return value;
+  }
+
+  redisUrl(name: string): string {
+    const value = this.string(name);
+    if (value === '') return value;
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      this.problems.push(`${name} is not a URL`);
+      return value;
+    }
+    if (parsed.protocol !== 'redis:' && parsed.protocol !== 'rediss:') {
+      this.problems.push(`${name} must start with redis:// or rediss://`);
+    } else if (parsed.hostname === '') {
+      this.problems.push(`${name} must name a host`);
     }
     return value;
   }

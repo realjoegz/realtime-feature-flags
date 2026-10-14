@@ -21,7 +21,7 @@ let keyOfA: string;
 
 beforeAll(async () => {
   env = await startEnvironment('stream', {
-    configure: (config) => ({ ...config, stream: { heartbeatMs: HEARTBEAT_MS } }),
+    configure: (config) => ({ ...config, stream: { ...config.stream, heartbeatMs: HEARTBEAT_MS } }),
   });
   keyOfA = `Bearer ${env.world.fixture.sdkKeys.aActive.key}`;
 });
@@ -231,7 +231,7 @@ describe('stream fan-out', () => {
     const hub = new StreamHub(hubConfig, reader);
     const events: MessageEvent[] = [];
     let completed = false;
-    hub.wake(OTHER_TENANT);
+    hub.wake(OTHER_TENANT, 'notification');
     const subscription = hub.stream(TENANT, NO_CURSOR).subscribe({
       next: (event) => events.push(event),
       complete: () => {
@@ -240,7 +240,7 @@ describe('stream fan-out', () => {
     });
     // The new stream wakes its tenant: the first read starts and waits at its gate.
     expect(reader.calls).toEqual([{ tenantId: TENANT, above: NO_CURSOR }]);
-    for (let wake = 0; wake < 5; wake += 1) hub.wake(TENANT);
+    for (let wake = 0; wake < 5; wake += 1) hub.wake(TENANT, 'notification');
     expect(reader.calls).toHaveLength(1);
 
     reader.version = 5;
@@ -255,7 +255,7 @@ describe('stream fan-out', () => {
     expect(events.map((event) => event.id)).toEqual(['5']);
 
     reader.version = 6;
-    hub.wake(TENANT);
+    hub.wake(TENANT, 'notification');
     await reader.release();
     expect(reader.calls).toHaveLength(3);
     expect(events.map((event) => [event.id, event.type])).toEqual([
@@ -279,7 +279,7 @@ describe('stream fan-out', () => {
     // starts, so a shutdown that destroys the sockets before the ends are written
     // shows as failed bodies.
     const closing = await startEnvironment('streamclose', {
-      configure: (config) => ({ ...config, stream: { heartbeatMs: 10 } }),
+      configure: (config) => ({ ...config, stream: { ...config.stream, heartbeatMs: 10 } }),
     });
     const key = `Bearer ${closing.world.fixture.sdkKeys.aActive.key}`;
     const streams = await Promise.all(
@@ -309,7 +309,8 @@ const hubConfig: Config = {
   database: { url: 'postgres://unused@127.0.0.1:9/unused', poolMax: 1, connectDeadlineMs: 0 },
   auth: { ...UNUSED_AUTH, audience: 'rff-api' },
   // Long enough that no heartbeat comes during the test.
-  stream: { heartbeatMs: 600_000 },
+  stream: { heartbeatMs: 600_000, safetyPollMs: null },
+  redis: { url: 'redis://127.0.0.1:9', prefix: 'unused', connectDeadlineMs: 0 },
 };
 
 /** A reader whose reads each wait until the test releases them, and that records each call. */
@@ -319,7 +320,7 @@ class GatedReader extends SnapshotReader {
   private readonly gates: (() => void)[] = [];
 
   constructor() {
-    super(undefined as never);
+    super(undefined as never, undefined as never);
   }
 
   override async read(tenantId: string, above: number): Promise<TenantRead | null> {

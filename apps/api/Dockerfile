@@ -22,8 +22,8 @@ COPY apps/api/tsconfig.json apps/api/tsconfig.build.json apps/api/
 COPY apps/api/src apps/api/src
 RUN npm run build --workspace @rff/api
 
-# The runtime dependencies (Nest, Express, pg, rxjs, jose) are JavaScript with no
-# native addons, so they install on the build platform as well. npm links the
+# The runtime dependencies (Nest, Express, pg, rxjs, jose, redis) are JavaScript with
+# no native addons, so they install on the build platform as well. npm links the
 # workspace package @rff/core into node_modules as ../../packages/core.
 FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS runtime-deps
 WORKDIR /src

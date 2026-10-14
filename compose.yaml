@@ -21,6 +21,10 @@ name: rff
 # verified against Dex, which joins this file in a later step: the issuer is the
 # address browsers use, and the key set is fetched over the compose network. The
 # key set is fetched on the first request with a token, so the API starts without it.
+# Both replicas use one Redis prefix (the default, rff): a flag write on either one
+# publishes a notification that wakes the SDK streams on both, and they share the
+# snapshot cache. Each replica also reads, every RFF_SAFETY_POLL_MS, the version of
+# every tenant it has open streams for, so a lost notification is found in Postgres.
 x-api-environment: &api-environment
   RFF_DATABASE_URL: postgres://rff_app:rff-app-local@postgres:5432/rff
   RFF_HTTP_HOST: 0.0.0.0
@@ -28,6 +32,8 @@ x-api-environment: &api-environment
   RFF_AUTH_ISSUER: http://127.0.0.1:5556/dex
   RFF_AUTH_JWKS_URL: http://dex:5556/dex/keys
   RFF_AUTH_AUDIENCE: rff-api
+  RFF_REDIS_URL: redis://redis:6379
+  RFF_SAFETY_POLL_MS: '5000'
 
 # Shared by api-1 and api-2. The image is built by the migrate service below and is
 # never pulled, because no registry has it.
@@ -38,6 +44,8 @@ x-api: &api
   read_only: true
   depends_on:
     postgres:
+      condition: service_healthy
+    redis:
       condition: service_healthy
     migrate:
       condition: service_completed_successfully
@@ -53,6 +61,9 @@ x-api: &api
 services:
   postgres:
     image: postgres:18.6-alpine
+    # The default limit is 100 connections. One API test run holds up to about 35
+    # at once, and runs on one machine (CI, a second checkout) share this server.
+    command: ['postgres', '-c', 'max_connections=300']
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: rff-admin-local
@@ -74,7 +85,8 @@ services:
 
   redis:
     image: redis:8.10.2-alpine
-    # A cache and a notification bus: nothing in Redis has to survive a restart.
+    # A cache and a notification bus: nothing in Redis has to survive a restart. A
+    # replica that loses its connection retries it, and reads go to Postgres meanwhile.
     command: ['redis-server', '--save', '', '--appendonly', 'no']
     ports:
       - 127.0.0.1:56379:6379

@@ -4,7 +4,8 @@
 // connection, whose body fails at once; or stall, as a peer that vanished, whose
 // body delivers no more bytes and never fails, so only the client's read timeout
 // notices it. The API keeps writing into a stalled connection until the client
-// gives up on it.
+// gives up on it. aim() sends the next connections to another instance, as a load
+// balancer would after the client reconnects.
 
 export type DropMode = 'cut' | 'stall';
 
@@ -16,8 +17,22 @@ interface Link {
 export class FaultyNetwork {
   readonly #links = new Set<Link>();
   #down = false;
+  #origin: string | null = null;
+  #lastOrigin: string | null = null;
   /** Connections that got a response. */
   opened = 0;
+  /** Connections that got a response from another instance than the one before. */
+  switched = 0;
+
+  /** Every connection from now on goes to the origin of base, whatever URL the client asks for. */
+  aim(base: string): void {
+    this.#origin = new URL(base).origin;
+  }
+
+  /** Cuts every open connection, so the client reconnects at once. */
+  cut(): void {
+    for (const link of this.#links) link.cut();
+  }
 
   get down(): boolean {
     return this.#down;
@@ -70,9 +85,18 @@ export class FaultyNetwork {
     signal?.addEventListener('abort', onAbort, { once: true });
     this.#links.add(link);
 
+    let target: string | URL | Request = input;
+    if (this.#origin !== null) {
+      if (input instanceof Request) throw new TypeError('FaultyNetwork takes a URL, not a Request');
+      const url = new URL(String(input));
+      const origin = new URL(this.#origin);
+      url.protocol = origin.protocol;
+      url.host = origin.host;
+      target = url;
+    }
     let response: Response;
     try {
-      response = await fetch(input, { ...init, signal: upstream.signal });
+      response = await fetch(target, { ...init, signal: upstream.signal });
     } catch (error) {
       release();
       throw state === 'cut' ? new TypeError('the connection was reset') : error;
@@ -82,6 +106,9 @@ export class FaultyNetwork {
       throw new TypeError('the connection was reset');
     }
     this.opened += 1;
+    const origin = new URL(response.url || String(target)).origin;
+    if (this.#lastOrigin !== null && origin !== this.#lastOrigin) this.switched += 1;
+    this.#lastOrigin = origin;
     const source = response.body;
     if (source === null) {
       release();
