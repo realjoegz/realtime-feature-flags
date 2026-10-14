@@ -14,8 +14,9 @@
 # RFF_AUTH_ISSUER. Inside the compose network Dex is http://dex:5556/dex.
 issuer: http://127.0.0.1:5556/dex
 
-# Keys, sessions and codes are lost when the container stops; a restart signs with
-# new keys, so every earlier token stops verifying.
+# Keys, sessions and codes are lost when the container stops, and a restart signs
+# with new keys. An earlier token stops verifying once an API replica fetches the new
+# key set, at the latest 10 minutes after its last fetch.
 storage:
   type: memory
 

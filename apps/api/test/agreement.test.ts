@@ -336,7 +336,7 @@ function rewrittenRows(rewrite: (row: Record<string, unknown>) => void): AppChan
 
 describe('agreement between the SDK and POST /evaluate', () => {
   it(
-    `random flag sets saved through the API reach an SDK client over the stream as saved, and its evaluate() and POST /evaluate on the other app give the same value, reason, rule index and bucket at the same version, each branch in at least 5 percent of evaluations; the other app answers the first request of at least 3 runs in 4 from the entry the first app cached for the stream ${label(AGREEMENT)}`,
+    `random flag sets saved through the API reach an SDK client as saved, and its evaluate() agrees with POST /evaluate on the other app at the same version ${label(AGREEMENT)}`,
     { timeout: 300_000 },
     async () => {
       const env = await startEnvironment('agreement', [{}, {}]);

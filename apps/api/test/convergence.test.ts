@@ -53,12 +53,12 @@ const COMMON = [
   'reopened',
 ] as const;
 
-const CLAIM =
-  "end with the database's flags and version once faults stop and again after each of 3 rounds of saves made at once while every client is connected, apply strictly increasing versions whose snapshots each hold the flags of their version, and the tenant's versions have no gaps under concurrent saves";
+// The titles are short; docs/evidence.md states in full what each run checks.
+const CLAIM = "end on the database's flags and version and apply strictly increasing versions";
 
 describe('convergence on two instances', () => {
   it(
-    `safety poll off: ${CLIENTS} SDK clients on two apps sharing Postgres and Redis, moving between them, ${CLAIM}, healed by notifications, the re-check after a subscriber reset and the read when a stream opens ${SIMULATION_LABEL}`,
+    `safety poll off: ${CLIENTS} SDK clients moving between two apps ${CLAIM} ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const tally = await simulate('convnopoll', {
@@ -76,7 +76,7 @@ describe('convergence on two instances', () => {
   );
 
   it(
-    `every notification lost: ${CLIENTS} SDK clients on two apps sharing Postgres and Redis, moving between them, ${CLAIM}, healed by the safety poll and the read when a stream opens ${SIMULATION_LABEL}`,
+    `every notification lost: ${CLIENTS} SDK clients moving between two apps ${CLAIM} ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const tally = await simulate('convdropped', {
@@ -95,7 +95,7 @@ describe('convergence on two instances', () => {
   );
 
   it(
-    `poll and notifications on, with lost notifications, failing publishes and subscriber resets among the steps: ${CLIENTS} SDK clients on two apps sharing Postgres and Redis, moving between them, ${CLAIM} ${SIMULATION_LABEL}`,
+    `poll and notifications on, with lost notifications, failing publishes and subscriber resets: ${CLIENTS} SDK clients moving between two apps ${CLAIM} ${SIMULATION_LABEL}`,
     { timeout: 300_000 },
     async () => {
       const tally = await simulate('convfaulty', {
