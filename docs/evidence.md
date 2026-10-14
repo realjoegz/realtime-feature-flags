@@ -149,7 +149,7 @@ The seed test holds the `sub` of a real Dex v2.46.0 token as a constant. Cookie 
 
 ### The runs
 
-The [README table](../README.md#latency) gives the results and conditions of the two committed runs of `npm run latency -- --clients 100 --warmup 30 --changes 300`, from [`latency-20261014T170235Z.json`](../bench/results/latency-20261014T170235Z.json) and [`latency-20261014T170500Z.json`](../bench/results/latency-20261014T170500Z.json), at commit f64f196 with a clean tree. Later commits change one setting on a measured change's path: the API no longer sends the X-Powered-By header.
+The [README table](../README.md#latency) gives the results and conditions of the two committed runs of `npm run latency -- --clients 100 --warmup 30 --changes 300`, from [`latency-20261014T210647Z.json`](../bench/results/latency-20261014T210647Z.json) and [`latency-20261014T210912Z.json`](../bench/results/latency-20261014T210912Z.json), at commit 0aea5b6 with a clean tree. Only the results files, the README table and the sentences that quote the runs changed after it.
 
 - **One laptop, one process.** The clients shared the saving process's event loop and reached the replicas through Colima's port forwarding, over no physical network.
 - **One tenant, one change at a time.** Nothing here covers concurrent saves, many tenants, large snapshots or thousands of streams.

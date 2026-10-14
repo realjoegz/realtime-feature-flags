@@ -69,13 +69,13 @@ Measured on one laptop with `npm run latency`, not in CI: from just before a PUT
 <!-- latency:start -->
 | Run (UTC) | Clients | Changes | To the last client (ms): min, median, p95, max | Save round trip (ms): min, median, p95, max | Reconnects | Not by notification |
 | --- | --- | --- | --- | --- | --- | --- |
-| [2026-10-14 17:02:35](bench/results/latency-20261014T170235Z.json) | 100: 50 on api-1, 50 on api-2 | 300 after 30 warm-up | 4.0, 5.0, 7.0, 12.9 | 1.7, 2.1, 3.3, 7.8 | 0 | 0 |
-| [2026-10-14 17:05:00](bench/results/latency-20261014T170500Z.json) | 100: 50 on api-1, 50 on api-2 | 300 after 30 warm-up | 4.0, 5.0, 8.2, 17.2 | 1.6, 2.1, 4.1, 12.8 | 0 | 0 |
+| [2026-10-14 21:06:47](bench/results/latency-20261014T210647Z.json) | 100: 50 on api-1, 50 on api-2 | 300 after 30 warm-up | 4.4, 5.8, 7.9, 14.1 | 2.0, 2.6, 3.8, 8.2 | 0 | 0 |
+| [2026-10-14 21:09:12](bench/results/latency-20261014T210912Z.json) | 100: 50 on api-1, 50 on api-2 | 300 after 30 warm-up | 4.3, 5.5, 7.9, 14.6 | 1.9, 2.5, 4.5, 8.0 | 0 | 0 |
 
-Conditions: MacBook Air (Mac16,12), Apple M4, 10 cores, 16 GiB, macOS 26.6.2; Colima 0.10.3 with 6 CPUs, 8 GiB, aarch64; Node 24.13.0, PostgreSQL 18.6, Redis 8.10.2, Docker 29.5.2; open-file limit 61440 in the measuring process; 1 tenant with 3 flags and a 519-byte snapshot; clients in the Node process on the host that sends the saves, each connected directly to its replica's published port; every save a PUT of dark-mode to api-1; safety poll every 30 s; commit f64f196. Reconnects and deliveries that no Redis notification brought are counted over the measured changes.
+Conditions: MacBook Air (Mac16,12), Apple M4, 10 cores, 16 GiB, macOS 26.6.2; Colima 0.10.3 with 6 CPUs, 8 GiB, aarch64; Node 24.13.0, PostgreSQL 18.6, Redis 8.10.2, Docker 29.5.2; open-file limit 61440 in the measuring process; 1 tenant with 3 flags and a 519-byte snapshot; clients in the Node process on the host that sends the saves, each connected directly to its replica's published port; every save a PUT of dark-mode to api-1; safety poll every 30 s; commit 0aea5b6. Reconnects and deliveries that no Redis notification brought are counted over the measured changes.
 <!-- latency:end -->
 
-In both runs every measured change reached all 100 clients within 17.2 ms, with the clients on the same laptop as the stack.
+In both runs every measured change reached all 100 clients within 14.6 ms, with the clients on the same laptop as the stack.
 
 ## What it does not do
 
