@@ -2,8 +2,9 @@ import { randomBytes } from 'node:crypto';
 import type pg from 'pg';
 import { inject } from 'vitest';
 import { connectClient } from '../../src/database/connect.js';
+import { MIGRATIONS_DIR, migrate, readMigrations } from '../../src/migrator.js';
 import { createDatabase } from './runs.js';
-import { ident, literal, withCredentials, withDatabase } from './settings.js';
+import { harnessSettings, ident, literal, withCredentials, withDatabase } from './settings.js';
 
 /** What global-setup.ts provides to every test file of the api project. */
 export interface HarnessContext {
@@ -69,6 +70,30 @@ export async function createScratchDatabase(label: string): Promise<ScratchDatab
     adminUrl,
     urlFor: (role) => withCredentials(adminUrl, role.name, role.password),
   };
+}
+
+export interface MigratedDatabase extends ScratchDatabase {
+  /** rff_app on this database. */
+  readonly appUrl: string;
+}
+
+/**
+ * A scratch database with every migration in apps/api/migrations applied by the
+ * migration runner, like this run's own database. For tests that empty and refill
+ * the tenant tables, which other test files share in the run's database.
+ */
+export async function createMigratedDatabase(label: string): Promise<MigratedDatabase> {
+  const scratch = await createScratchDatabase(label);
+  const { appPassword } = harnessSettings(process.env);
+  const client = await connectClient(scratch.adminUrl, 'rff-test-migrate');
+  try {
+    await migrate(client, await readMigrations(MIGRATIONS_DIR), {
+      settings: { 'rff.app_password': appPassword },
+    });
+  } finally {
+    await client.end();
+  }
+  return { ...scratch, appUrl: scratch.urlFor({ name: 'rff_app', password: appPassword }) };
 }
 
 /**

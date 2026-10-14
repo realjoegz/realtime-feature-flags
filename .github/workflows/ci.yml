@@ -13,10 +13,11 @@ permissions:
   contents: read
 
 # Every action is pinned to the commit of the release named in its comment. A tag
-# can be moved by the action's owner; a commit cannot.
+# can be moved by the action's owner; a commit cannot. The runner image is pinned to
+# Ubuntu 24.04 as well, so a new ubuntu-latest does not change the build.
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -49,7 +50,7 @@ jobs:
   # The whole compose stack from a clean checkout: the API image builds, migrate exits
   # 0, both replicas turn healthy, and scripts/demo.sh passes against them.
   local-stack:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
