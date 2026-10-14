@@ -19,7 +19,7 @@ How fast a change arrives is not promised. [evidence.md](evidence.md#13-latency)
 | `packages/core` (`@rff/core`) | Flag types, validation, MurmurHash3, bucketing and `evaluate()`. Pure functions, no I/O | TypeScript 6.0.3 |
 | `packages/sdk` (`@rff/sdk`) | `FlagsClient`: the stream connection, its own server-sent events parser, local evaluation through `@rff/core` | `fetch` in Node 24.13.0 |
 | `apps/api` (`@rff/api`) | The HTTP API, the stream, the SQL migrations and their runner, the demo seed | NestJS 12.1.3 on Express 5.2.1, pg 8.23.1, node-redis 6.3.0, jose 6.2.12 |
-| `apps/dashboard` (`@rff/dashboard`) | Sign-in, the tenant list, a tenant's flags and its audit log | Next.js 16.4.0 App Router, React 19.3.0, openid-client 6.8.8, jose 6.2.12 |
+| `apps/dashboard` (`@rff/dashboard`) | Sign-in, the tenant list, a tenant's flags and its audit log | Next.js 16.4.1 App Router, React 19.3.0, openid-client 6.8.8, jose 6.2.12 |
 | `tools/latency` (`@rff/latency`) | Times saves on the local stack to the last of many SDK clients, and renders the README table | `@rff/sdk` |
 
 The stores are PostgreSQL 18.6 and Redis 8.10.2, and the identity provider is Dex v2.46.0. The packages, the API and the latency tool build with `tsc` to `dist` and run with `node` on it; the dashboard builds with `next build`. Core builds first, then the SDK, the API and the dashboard. The API and dashboard images are built on `node:24.13.0-alpine`, pinned by digest, and run as user 1000.
