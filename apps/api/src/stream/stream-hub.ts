@@ -188,12 +188,24 @@ export class StreamHub implements BeforeApplicationShutdown {
         flags: snapshot.flags,
       }),
     };
+    let sent = 0;
     for (const client of streams.clients) {
       if (client.lastSent < snapshot.version) {
         client.lastSent = snapshot.version;
         client.send(event);
-        this.delivered[cause] += 1;
+        sent += 1;
       }
+    }
+    this.delivered[cause] += sent;
+    // What a read sends is logged, with its cause, unless the latest wake-up that
+    // asked for the read was a notification. tools/latency counts these lines in
+    // the replicas' logs to report the deliveries during a run that came from a
+    // connection, the bus reconnecting or the poll. Notification deliveries, one
+    // per change, are not logged.
+    if (sent > 0 && cause !== 'notification') {
+      this.logger.log(
+        `sent version ${snapshot.version} of tenant ${snapshot.tenantId} to ${sent} ${sent === 1 ? 'stream' : 'streams'} after a ${cause} wake-up`,
+      );
     }
   }
 }

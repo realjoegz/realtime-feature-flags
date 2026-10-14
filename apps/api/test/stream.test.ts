@@ -1,6 +1,6 @@
-import { type MessageEvent } from '@nestjs/common';
+import { type Logger, type MessageEvent } from '@nestjs/common';
 import type pg from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { type Config } from '../src/config.js';
 import type { Snapshot } from '../src/flags/flag-store.js';
 import { SnapshotReader, type TenantRead } from '../src/stream/snapshot-reader.js';
@@ -272,6 +272,52 @@ describe('stream fan-out', () => {
     await hub.beforeApplicationShutdown();
     expect(completed).toBe(true);
     subscription.unsubscribe();
+  });
+
+  it('a snapshot sent after a wake-up other than a notification is logged with its version, tenant, number of streams and cause, one sent after a notification is not, and a read that several wake-ups asked for counts under the latest', async () => {
+    const reader = new GatedReader();
+    const hub = new StreamHub(hubConfig, reader);
+    const { logger } = hub as unknown as { logger: Logger };
+    const log = vi.spyOn(logger, 'log').mockImplementation(() => {});
+    const first = hub.stream(TENANT, NO_CURSOR).subscribe();
+    // Joins during the first read, which then sends to both; one more read follows.
+    const second = hub.stream(TENANT, NO_CURSOR).subscribe();
+    reader.version = 5;
+    await reader.release();
+    await reader.release();
+
+    reader.version = 6;
+    hub.wake(TENANT, 'notification');
+    await reader.release();
+    reader.version = 7;
+    hub.wake(TENANT, 'poll');
+    await reader.release();
+    reader.version = 8;
+    hub.wakeAll('ready');
+    await reader.release();
+    second.unsubscribe();
+    reader.version = 9;
+    hub.wake(TENANT, 'poll');
+    await reader.release();
+    // A stream opens during a poll read that finds nothing new, and a notification
+    // arrives before that read ends: the one read that follows counts under the
+    // notification, so the new stream's first snapshot is not logged.
+    hub.wake(TENANT, 'poll');
+    const third = hub.stream(TENANT, NO_CURSOR).subscribe();
+    hub.wake(TENANT, 'notification');
+    await reader.release();
+    await reader.release();
+
+    expect(log.mock.calls.map((call) => call[0])).toEqual([
+      `sent version 5 of tenant ${TENANT} to 2 streams after a connect wake-up`,
+      `sent version 7 of tenant ${TENANT} to 2 streams after a poll wake-up`,
+      `sent version 8 of tenant ${TENANT} to 2 streams after a ready wake-up`,
+      `sent version 9 of tenant ${TENANT} to 1 stream after a poll wake-up`,
+    ]);
+    expect(hub.delivered).toEqual({ connect: 2, notification: 3, ready: 2, poll: 3 });
+    await hub.beforeApplicationShutdown();
+    first.unsubscribe();
+    third.unsubscribe();
   });
 
   it('close() completes every open stream while heartbeats flow, each client sees the end of the body and no reset, and close() returns within 1 s', async () => {

@@ -7,7 +7,8 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "tools/*"
   ],
   "engines": {
     "node": "24.13.0"
@@ -23,7 +24,10 @@
     "test": "vitest run",
     "check:claims": "node scripts/check-claims.mjs",
     "check:words": "node scripts/check-readme-words.mjs",
-    "verify": "npm run lint && npm run format:check && npm run typecheck && npm run build && npm test && npm run check:claims && npm run check:words"
+    "check:latency": "node tools/latency/dist/render-main.js --check",
+    "latency": "node tools/latency/dist/main.js",
+    "latency:render": "node tools/latency/dist/render-main.js --write",
+    "verify": "npm run lint && npm run format:check && npm run typecheck && npm run build && npm test && npm run check:claims && npm run check:latency && npm run check:words"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

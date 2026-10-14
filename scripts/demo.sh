@@ -21,22 +21,16 @@
 #    tenant that does not exist.
 #
 # The users, passwords, client secret and SDK key are the local demo values of
-# dex/local-demo-config.yaml and apps/api/src/seed/demo-data.ts. Needs curl, jq,
-# openssl and perl. The first checks poll until a deadline, because port forwarding
-# can lag a container that compose reports healthy.
+# dex/local-demo-config.yaml and apps/api/src/seed/demo-data.ts. The sign-in through
+# Dex is in scripts/lib/dex-sign-in.sh, which tools/latency uses as well. Needs curl,
+# jq, openssl and perl. The first checks poll until a deadline, because port
+# forwarding can lag a container that compose reports healthy.
 set -euo pipefail
 
 API_1="${RFF_DEMO_API_1:-http://127.0.0.1:4001}"
 API_2="${RFF_DEMO_API_2:-http://127.0.0.1:4002}"
 DASHBOARD="${RFF_DEMO_DASHBOARD:-http://127.0.0.1:3100}"
-DEX="${RFF_DEMO_DEX:-http://127.0.0.1:5556/dex}"
 DEADLINE_SECONDS="${RFF_DEMO_DEADLINE_SECONDS:-60}"
-
-# The dashboard's client, as registered with Dex.
-CLIENT_ID=rff-dashboard
-CLIENT_SECRET=dashboard-local-secret
-REDIRECT_URI=http://127.0.0.1:3100/auth/callback
-SCOPE='openid email profile audience:server:client_id:rff-api'
 ACME_SDK_KEY=rff_sdk_acme-local-demo-key-not-a-secret00000000000
 NO_TENANT=00000000-0000-4000-8000-000000000000
 # How long a change may take from api-1 to a stream on api-2, and how long the demo
@@ -66,11 +60,13 @@ fail() {
   echo "FAIL $*" >&2
   exit 1
 }
+# DEX, the dashboard's client (CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SCOPE),
+# b64url, uri, dex_login and api_token.
+# shellcheck source=lib/dex-sign-in.sh
+source "$(dirname "$0")/lib/dex-sign-in.sh"
 [[ "$SAFETY_POLL_MS" =~ ^[0-9]+$ ]] || fail "compose.yaml should set RFF_SAFETY_POLL_MS once, it gives: ${SAFETY_POLL_MS:-nothing}"
 now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time * 1000'; }
-b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
 b64url_decode() { perl -MMIME::Base64=decode_base64url -0777 -ne 'print decode_base64url($_)'; }
-uri() { jq -rn --arg value "$1" '$value | @uri'; }
 # header FILE NAME: the values of a response header saved with curl -D, one per line.
 header() { tr -d '\r' <"$1" | grep -i "^$2: " | sed 's/^[^:]*: //' || true; }
 
@@ -104,23 +100,6 @@ expect_status() {
   fail "GET $url: expected $status within ${DEADLINE_SECONDS}s, last status: $got"
 }
 
-# dex_login LOGIN PASSWORD AUTHORIZATION_URL JAR: plays the browser at Dex. Follows
-# the authorization request to the login form, posts the form back to the URL it
-# came from, and prints the URL Dex then redirects to: the redirect URI with the
-# code and the state. Nothing listens there for this function; the caller decides.
-dex_login() {
-  local login="$1" password="$2" authorization_url="$3" jar="$4" form_url approval callback
-  form_url="$(curl -sS -c "$jar" -b "$jar" -o /dev/null -L -w '%{url_effective}' "$authorization_url")"
-  approval="$(curl -sS -c "$jar" -b "$jar" -o /dev/null -w '%{redirect_url}' \
-    --data-urlencode "login=$login" --data-urlencode "password=$password" "$form_url")"
-  [[ -n "$approval" ]] || fail "Dex did not accept the login form for $login at $form_url"
-  # With skipApprovalScreen, the approval step redirects straight to the client.
-  callback="$(curl -sS -c "$jar" -b "$jar" -o /dev/null -w '%{redirect_url}' "$approval")"
-  [[ "$callback" == "$REDIRECT_URI?"* ]] ||
-    fail "Dex sent $login to ${callback:-nowhere} instead of $REDIRECT_URI"
-  printf '%s' "$callback"
-}
-
 # dashboard_login JAR NAME: GET /auth/login on the dashboard; checks the redirect
 # to Dex and the flow cookie, and prints the authorization URL.
 dashboard_login() {
@@ -133,25 +112,6 @@ dashboard_login() {
   flow="$(header "$work/$name.headers" set-cookie | grep '^rff_auth_flow=' || true)"
   [[ "$flow" =~ $HTTP_ONLY ]] || fail "the sign-in flow cookie is not HttpOnly: ${flow:-none}"
   printf '%s' "$location"
-}
-
-# api_token LOGIN PASSWORD: an access token for the API, through Dex's authorization
-# code flow with PKCE and the dashboard's client. Dex enforces S256 for every client
-# and has no password grant, so this is the only way to a token.
-api_token() {
-  local login="$1" password="$2" verifier challenge state callback code reply token
-  verifier="$(openssl rand 32 | b64url)"
-  challenge="$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | b64url)"
-  state="$(openssl rand 12 | b64url)"
-  callback="$(dex_login "$login" "$password" "$DEX/auth?client_id=$CLIENT_ID&redirect_uri=$(uri "$REDIRECT_URI")&response_type=code&scope=$(uri "$SCOPE")&state=$state&code_challenge=$challenge&code_challenge_method=S256" "$work/dex-api-$login.jar")"
-  [[ "$callback" == *"state=$state"* ]] || fail "the state Dex returned for $login is not the one sent"
-  code="$(printf '%s' "$callback" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')"
-  reply="$(curl -sS -u "$CLIENT_ID:$CLIENT_SECRET" "$DEX/token" \
-    --data-urlencode grant_type=authorization_code --data-urlencode "code=$code" \
-    --data-urlencode "redirect_uri=$REDIRECT_URI" --data-urlencode "code_verifier=$verifier")"
-  token="$(printf '%s' "$reply" | jq -r '.access_token // empty')"
-  [[ -n "$token" ]] || fail "Dex gave $login no access token: $reply"
-  printf '%s' "$token"
 }
 
 # call METHOD URL TOKEN [BODY]: the status and body of one API request, "STATUS BODY".
@@ -232,9 +192,9 @@ ok "GET /auth/callback with Dex's code and a changed state -> 400 (state), no se
 
 # --- 3. access tokens for the API ---------------------------------------------------
 
-alice="$(api_token alice@example.test alice-local-pass)"
-bob="$(api_token bob@example.test bob-local-pass)"
-dave="$(api_token dave@example.test dave-local-pass)"
+alice="$(api_token alice@example.test alice-local-pass "$work/dex-api-alice.jar")"
+bob="$(api_token bob@example.test bob-local-pass "$work/dex-api-bob.jar")"
+dave="$(api_token dave@example.test dave-local-pass "$work/dex-api-dave.jar")"
 reply="$(call GET "$API_1/me" "$alice")"
 acme="$(printf '%s' "${reply#* }" | jq -r '.memberships[] | select(.slug == "acme" and .role == "owner") | .tenantId')"
 [[ "${reply%% *}" == 200 && "$acme" == "$dashboard_acme" ]] ||

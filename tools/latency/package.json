@@ -1,0 +1,18 @@
+{
+  "name": "@rff/latency",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Times flag saves on the compose stack to the last of many SDK clients across both API replicas, and renders the README table from the committed results.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": "24.13.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@rff/sdk": "0.0.0"
+  }
+}

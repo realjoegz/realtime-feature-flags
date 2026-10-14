@@ -13,3 +13,6 @@ packages/core/conformance/evaluation-cases.json
 
 # Fixtures whose exact bytes the script tests depend on.
 scripts/test/fixtures/words/
+
+# Written by tools/latency, one change per line (tools/latency/src/results.ts).
+bench/results/

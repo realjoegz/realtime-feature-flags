@@ -9,7 +9,7 @@
 // so does a missing file, a file that failed to load, a link that names a file
 // instead of a test, a table row the parser would otherwise drop, and a report
 // that is older than --max-age-minutes or older than a linked test file or any
-// file under packages/, apps/ or scripts/ or vitest.config.ts.
+// file under packages/, apps/, tools/ or scripts/ or vitest.config.ts.
 //
 //   node scripts/check-claims.mjs [--root DIR] [--report FILE] [--max-age-minutes N]
 //                                 [--min-rows N] [FILE.md ...]
@@ -37,7 +37,7 @@ const FENCE = /^(```|~~~)/;
 const LINK = /\[([^\]]*)\]\(([^)\s]*)\)/g;
 // The code the tests run. A file here that changed after the report was written
 // means the report may not describe the current code.
-const DEFAULT_SOURCES = ['packages', 'apps', 'scripts', 'vitest.config.ts'];
+const DEFAULT_SOURCES = ['packages', 'apps', 'tools', 'scripts', 'vitest.config.ts'];
 // Build output and installed packages, which change without a source change.
 const SKIPPED_NAMES = new Set(['node_modules', 'dist', 'coverage']);
 
