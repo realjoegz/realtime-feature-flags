@@ -2,7 +2,8 @@ import { defineConfig } from 'vitest/config';
 
 // One root config with a project per package. No test is retried: a test that
 // passes only on a second try is a failure. The JSON report is the input of
-// scripts/check-claims.mjs.
+// scripts/check-claims.mjs. The api project has its own config file, because it
+// compiles with SWC and needs Postgres and Redis (apps/api/vitest.config.ts).
 export default defineConfig({
   test: {
     retry: 0,
@@ -14,6 +15,7 @@ export default defineConfig({
     projects: [
       { test: { name: 'core', include: ['packages/core/test/**/*.test.ts'] } },
       { test: { name: 'scripts', include: ['scripts/test/*.test.mjs'] } },
+      'apps/api/vitest.config.ts',
     ],
   },
 });

@@ -14,7 +14,9 @@
   "rules": {
     "import/no-named-as-default-member": "off",
     "vitest/valid-expect": ["error", { "maxArgs": 2 }],
-    "vitest/expect-expect": ["error", { "assertFunctionNames": ["expect", "fc.assert"] }]
+    "vitest/expect-expect": ["error", { "assertFunctionNames": ["expect", "fc.assert"] }],
+    "typescript/no-extraneous-class": ["error", { "allowWithDecorator": true }],
+    "import/no-unassigned-import": ["error", { "allow": ["reflect-metadata"] }]
   },
   "overrides": [
     {

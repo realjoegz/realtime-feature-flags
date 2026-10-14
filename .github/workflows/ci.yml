@@ -29,6 +29,11 @@ jobs:
       # Installs exactly what package-lock.json pins, and fails if it is out of date.
       - run: npm ci
 
+      # The API tests create their own database on this Postgres and use their own
+      # key prefix on this Redis (apps/api/test/harness).
+      - name: Start Postgres and Redis
+        run: docker compose up --detach --wait postgres redis
+
       # Lint, format check, typecheck, build, all tests, then the claim checker and the
       # README word cap. The same command runs locally.
       - run: npm run verify
@@ -40,3 +45,25 @@ jobs:
           path: .vitest/
           include-hidden-files: true
           if-no-files-found: ignore
+
+  # The whole compose stack from a clean checkout: the API image builds, migrate exits
+  # 0, both replicas turn healthy, and scripts/demo.sh passes against them.
+  local-stack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build and start the stack
+        run: docker compose up --build --detach --wait
+
+      - name: Run the demo
+        run: scripts/demo.sh
+
+      - name: Show the compose logs
+        if: failure()
+        run: docker compose logs --no-color --timestamps
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down --volumes

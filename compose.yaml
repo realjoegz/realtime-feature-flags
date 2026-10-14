@@ -1,0 +1,119 @@
+# Local stack: PostgreSQL, Redis, a one-shot migration run and two API replicas.
+#
+# Every credential in this file is a local development value, and every port is
+# published on 127.0.0.1 only. The API tests use the same Postgres and Redis and the
+# same default passwords (apps/api/test/harness/settings.ts).
+#
+# Migration 0001 sets rff_app's password, and a database applies 0001 only once. To
+# change the password, change RFF_APP_DB_PASSWORD and RFF_DATABASE_URL together and
+# start from a new volume (docker compose down --volumes). Roles belong to the whole
+# server and every API test run applies 0001 to a new database, so a test run sets
+# the password to its own RFF_APP_DB_PASSWORD (default rff-app-local): keep the two
+# the same.
+#
+#   docker compose up --build --detach --wait   # whole stack, then scripts/demo.sh
+#   docker compose up --detach --wait postgres redis   # what npm run verify needs
+#   docker compose down --volumes
+
+name: rff
+
+# The API containers get the app role's credentials and nothing else.
+x-api-environment: &api-environment
+  RFF_DATABASE_URL: postgres://rff_app:rff-app-local@postgres:5432/rff
+  RFF_HTTP_HOST: 0.0.0.0
+  RFF_HTTP_PORT: '4000'
+
+# Shared by api-1 and api-2. The image is built by the migrate service below and is
+# never pulled, because no registry has it.
+x-api: &api
+  image: rff-api:local
+  pull_policy: never
+  init: true
+  read_only: true
+  depends_on:
+    postgres:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+  healthcheck:
+    test: ['CMD', 'wget', '--quiet', '--output-document=/dev/null', 'http://127.0.0.1:4000/health']
+    interval: 10s
+    timeout: 3s
+    retries: 3
+    start_period: 30s
+    start_interval: 1s
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: rff-admin-local
+      POSTGRES_DB: rff
+    ports:
+      - 127.0.0.1:55432:5432
+    volumes:
+      # Postgres 18 images keep PGDATA under this directory.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      # -h 127.0.0.1: the server that initdb starts first listens on the Unix socket only.
+      test: ['CMD-SHELL', 'pg_isready --username=postgres --dbname=rff --host=127.0.0.1']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.10.2-alpine
+    # A cache and a notification bus: nothing in Redis has to survive a restart.
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    ports:
+      - 127.0.0.1:56379:6379
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+      start_interval: 1s
+    restart: unless-stopped
+
+  # Applies apps/api/migrations as the database superuser and exits. Every run is
+  # idempotent, so a second "up" applies nothing new and exits 0 again.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: rff-api:local
+    init: true
+    read_only: true
+    command: ['node', 'dist/migrate-main.js']
+    environment:
+      RFF_MIGRATE_DATABASE_URL: postgres://postgres:rff-admin-local@postgres:5432/rff
+      RFF_APP_DB_PASSWORD: rff-app-local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  api-1:
+    <<: *api
+    environment:
+      <<: *api-environment
+      RFF_INSTANCE: api-1
+    ports:
+      - 127.0.0.1:4001:4000
+
+  api-2:
+    <<: *api
+    environment:
+      <<: *api-environment
+      RFF_INSTANCE: api-2
+    ports:
+      - 127.0.0.1:4002:4000
+
+volumes:
+  postgres-data:
