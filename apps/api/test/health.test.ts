@@ -15,6 +15,7 @@ function config(instance: string): Config {
     instance,
     database: { url: harness().appUrl, poolMax: 2, connectDeadlineMs: 5000 },
     auth: { ...UNUSED_AUTH, audience: 'rff-api' },
+    stream: { heartbeatMs: 15_000 },
   };
 }
 

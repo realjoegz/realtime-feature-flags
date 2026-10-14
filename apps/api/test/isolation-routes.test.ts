@@ -21,10 +21,15 @@ import {
   refusalFindings,
   ROUTE_CASES,
   routeTableFindings,
+  SDK_KEY_ROUTES,
   SELF_ROUTE,
   servedRoutes,
+  STREAM_ROUTE,
+  streamFindings,
 } from './isolation/routes.js';
 import { type Environment, type Reply, startEnvironment } from './support/api.js';
+import { databaseSnapshot } from './support/snapshots.js';
+import { openStream } from './support/sse.js';
 
 // Tenant isolation at the routes, the second half of the isolation proof (the first
 // is isolation-tables.test.ts). The detectors live in isolation/routes.ts; the
@@ -97,9 +102,14 @@ async function pairChecks(target: Environment): Promise<{
 describe('tenant isolation at the routes', () => {
   it("the routes the app's HTTP router serves are exactly the case table plus the public allow-list, GET /health", () => {
     const served = servedRoutes(env.api.app);
-    expect(describeFindings(routeTableFindings(served, ROUTE_CASES, PUBLIC_ROUTES))).toEqual([]);
+    expect(
+      describeFindings(
+        routeTableFindings(served, [...ROUTE_CASES, ...SDK_KEY_ROUTES], PUBLIC_ROUTES),
+      ),
+    ).toEqual([]);
     expect(Object.keys(PUBLIC_ROUTES)).toEqual(['GET /health']);
-    expect(served).toHaveLength(12);
+    expect(SDK_KEY_ROUTES.map((routeCase) => routeCase.route)).toEqual([STREAM_ROUTE]);
+    expect(served).toHaveLength(13);
   });
 
   it('each case: a member of A succeeds in A, and a member of B making the same request is refused exactly as for a tenant or resource that does not exist', async () => {
@@ -192,6 +202,12 @@ describe('tenant isolation at the routes', () => {
         status: routeCase.status,
         call: routeCase.call(fixture.tenantA, routeCase.ids?.onlyInA(env.world) ?? ''),
       })),
+      ...SDK_KEY_ROUTES.map((routeCase) => ({
+        route: routeCase.route,
+        access: routeCase.access,
+        status: routeCase.status,
+        call: routeCase.call(),
+      })),
       ...Object.entries(PUBLIC_ROUTES).map(([route, { call }]) => ({
         route,
         access: 'public' as const,
@@ -211,7 +227,95 @@ describe('tenant isolation at the routes', () => {
         `${route.route} as ${actor}: ${expectedStatus(route.access, route.status, actor)}`,
     );
     expect(actual).toEqual(expected);
-    expect(cells).toHaveLength(12 * 5);
+    expect(cells).toHaveLength(13 * 5);
+  });
+
+  it("the SDK stream: A's key receives A's snapshot as the database holds it, B's key receives B's with no canary of A, and A's revoked key, an unknown key, a key one character short, A's key without the Bearer scheme and the token of A's owner get the same 401 as no key", async () => {
+    await env.world.seed(env.admin);
+    const before = await rowsOfA();
+    const { findings, repliesToOthers, ownText } = await streamFindings(env);
+    expect(describeFindings(findings)).toEqual([]);
+    expect(repliesToOthers).toHaveLength(7);
+    expect(
+      describeFindings(canaryReplyFindings(repliesToOthers, env.world.fixture.canaries)),
+    ).toEqual([]);
+    // The canary check sees A's canaries in what A's key received.
+    expect(
+      canaryReplyFindings([{ route: 'A', reply: { text: ownText } }], env.world.fixture.canaries),
+    ).not.toEqual([]);
+    expect([...(await rowsOfA())]).toEqual([...before]);
+  });
+
+  it("the SDK stream: a change in A reaches A's open streams and none of B's, and the next event on B's stream is B's own change", async () => {
+    const { fixture, people } = env.world;
+    await env.world.seed(env.admin);
+    const ofA = await openStream(env.api.base, {
+      authorization: `Bearer ${fixture.sdkKeys.aActive.key}`,
+    });
+    const ofB = await openStream(env.api.base, {
+      authorization: `Bearer ${fixture.sdkKeys.bActive.key}`,
+    });
+    try {
+      await ofA.until(() => ofA.events.length === 1, "A's snapshot");
+      await ofB.until(() => ofB.events.length === 1, "B's snapshot");
+      const put = (tenantId: string, rolloutBasisPoints: number) =>
+        env.send(tenantId === fixture.tenantA ? people.shared : people.ownerOfB, {
+          method: 'PUT',
+          path: `/tenants/${tenantId}/flags/checkout`,
+          body: { enabled: true, rules: [], rolloutBasisPoints },
+        });
+      // A changes first, then B, then A twice more.
+      const versions = await inSequence(
+        [fixture.tenantA, fixture.tenantB, fixture.tenantA, fixture.tenantA],
+        async (tenantId) => ((await put(tenantId, 1234)).body as { version: number }).version,
+      );
+      expect(versions).toEqual([4, 2, 5, 6]);
+      await ofA.until(() => ofA.events.at(-1)?.lastEventId === '6', "A's version 6");
+      await ofB.until(() => ofB.events.length === 2, "B's change");
+      expect(ofB.events.map((event) => event.lastEventId)).toEqual(['1', '2']);
+      expect(JSON.parse(ofB.events[1]!.data)).toEqual(
+        await databaseSnapshot(env.admin, fixture.tenantB),
+      );
+      expect(JSON.parse(ofA.events.at(-1)!.data)).toEqual(
+        await databaseSnapshot(env.admin, fixture.tenantA),
+      );
+      expect(canaryReplyFindings([{ route: STREAM_ROUTE, reply: ofB }], fixture.canaries)).toEqual(
+        [],
+      );
+    } finally {
+      ofA.close();
+      ofB.close();
+    }
+  });
+
+  it("control: an app whose SDK key look-up gives A's tenant for every key is reported by the stream check, which finds A's snapshot on B's key, a stream for A's revoked key and for an unknown key, and A's canaries in what they received", async () => {
+    const leaky = await startEnvironment('isokeys', {
+      override: (builder, world) =>
+        builder.overrideProvider(TenantDatabase).useFactory({
+          factory: (pool: pg.Pool) => new EveryKeyIsA(pool, world.fixture.tenantA),
+          inject: [PG_POOL],
+        }),
+    });
+    try {
+      const { findings, repliesToOthers } = await streamFindings(leaky);
+      expect(describeFindings(findings)).toEqual([
+        `${STREAM_ROUTE}: B's key did not receive the snapshot of its own tenant`,
+        `${STREAM_ROUTE}: A's revoked key got 200`,
+        `${STREAM_ROUTE}: an unknown key got 200`,
+      ]);
+      // B's key, the revoked key and the unknown key each received A's flag key, salt
+      // and rule value.
+      const leaks = canaryReplyFindings(repliesToOthers, leaky.world.fixture.canaries);
+      expect(leaks.map((leak) => leak.detail.replace(/^.* canary of /, '')).toSorted()).toEqual(
+        ['public.flags.key', 'public.flags.rules', 'public.flags.salt'].flatMap((column) => [
+          column,
+          column,
+          column,
+        ]),
+      );
+    } finally {
+      await leaky.close();
+    }
   });
 
   it('control: an app with one route that has no case, and a case for a route the app does not serve, are reported', async () => {
@@ -220,7 +324,11 @@ describe('tenant isolation at the routes', () => {
       const removed = { ...tenantCases[0]!, route: 'GET /tenants/:tenantId/removed' };
       expect(
         describeFindings(
-          routeTableFindings(servedRoutes(extra.api.app), [...ROUTE_CASES, removed], PUBLIC_ROUTES),
+          routeTableFindings(
+            servedRoutes(extra.api.app),
+            [...ROUTE_CASES, ...SDK_KEY_ROUTES, removed],
+            PUBLIC_ROUTES,
+          ),
         ),
       ).toEqual([
         'GET /tenants/:tenantId/extra: is served but has no case and is not public: add a case',
@@ -299,6 +407,21 @@ class ExtraController {
   @Access('viewer')
   extra(): string {
     return 'extra';
+  }
+}
+
+/** A broken look-up: tenant A for every SDK key, known, unknown or revoked. */
+class EveryKeyIsA extends TenantDatabase {
+  constructor(
+    pool: pg.Pool,
+    private readonly tenantA: string,
+  ) {
+    super(pool);
+  }
+
+  override async tenantIdForSdkKeyHash(keyHash: Uint8Array): Promise<string | null> {
+    void keyHash;
+    return this.tenantA;
   }
 }
 

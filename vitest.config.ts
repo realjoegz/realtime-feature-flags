@@ -14,6 +14,7 @@ export default defineConfig({
     ],
     projects: [
       { test: { name: 'core', include: ['packages/core/test/**/*.test.ts'] } },
+      { test: { name: 'sdk', include: ['packages/sdk/test/**/*.test.ts'] } },
       { test: { name: 'scripts', include: ['scripts/test/*.test.mjs'] } },
       'apps/api/vitest.config.ts',
     ],

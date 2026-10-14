@@ -8,8 +8,9 @@ import type { MemberRole } from '../database/tenant-database.js';
 //   'public'     anyone, without a token (GET /health)
 //   'signed-in'  any user with a valid token who is in the users table (GET /me)
 //   a role       a member of the tenant in the path with at least that role
+//   'sdk-key'    an unrevoked SDK key, whose tenant the request acts in (GET /sdk/stream)
 
-export type AccessLevel = 'public' | 'signed-in' | MemberRole;
+export type AccessLevel = 'public' | 'signed-in' | 'sdk-key' | MemberRole;
 
 export const ACCESS_METADATA = 'rff:access';
 
@@ -25,5 +26,7 @@ export const Access = (level: AccessLevel): MethodDecorator => SetMetadata(ACCES
 /** The level a handler declared, or undefined when it declared none. */
 export function accessOf(handler: object): AccessLevel | undefined {
   const level: unknown = Reflect.getMetadata(ACCESS_METADATA, handler);
-  return level === 'public' || level === 'signed-in' || isMemberRole(level) ? level : undefined;
+  return level === 'public' || level === 'signed-in' || level === 'sdk-key' || isMemberRole(level)
+    ? level
+    : undefined;
 }

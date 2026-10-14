@@ -104,6 +104,7 @@ function configFor(url: string): Config {
     instance: 'role-check',
     database: { url, poolMax: 2, connectDeadlineMs: 5000 },
     auth: { ...UNUSED_AUTH, audience: 'rff-api' },
+    stream: { heartbeatMs: 15_000 },
   };
 }
 

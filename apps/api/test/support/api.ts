@@ -24,6 +24,7 @@ export function apiConfig(
     instance,
     database: { url: databaseUrl, poolMax: 4, connectDeadlineMs: 5000 },
     auth: { ...auth, audience: AUDIENCE },
+    stream: { heartbeatMs: 15_000 },
   };
 }
 
@@ -51,22 +52,36 @@ export async function listen(app: INestApplication): Promise<RunningApi> {
 }
 
 export interface AppChanges {
-  /** Replaces providers of the app, for a control that leaks or a recording notifier. */
-  readonly override?: (builder: TestingModuleBuilder) => TestingModuleBuilder;
+  /**
+   * Replaces providers of the app, for a control that leaks or a recording notifier.
+   * In startEnvironment it also gets the seeded world.
+   */
+  readonly override?: (builder: TestingModuleBuilder, world: World) => TestingModuleBuilder;
   /** Controllers added next to the app's own. */
   readonly controllers?: readonly (new (...args: never[]) => unknown)[];
+  /** Changes to the configuration, such as a shorter heartbeat interval. */
+  readonly configure?: (config: Config) => Config;
 }
 
 /** The app as createApp builds it, or as a testing module with the changes applied. */
-export async function startApi(config: Config, changes: AppChanges = {}): Promise<RunningApi> {
+export async function startApi(
+  config: Config,
+  changes: AppChanges = {},
+  world?: World,
+): Promise<RunningApi> {
+  const configured = changes.configure?.(config) ?? config;
   if (changes.override === undefined && changes.controllers === undefined) {
-    return listen(await createApp(config, { logger: false }));
+    return listen(await createApp(configured, { logger: false }));
   }
   const builder = Test.createTestingModule({
-    imports: [AppModule.forRoot(config)],
+    imports: [AppModule.forRoot(configured)],
     controllers: [...(changes.controllers ?? [])],
   });
-  const moduleRef = await (changes.override?.(builder) ?? builder).compile();
+  if (changes.override !== undefined && world === undefined) {
+    throw new Error('startApi: an override needs the world; use startEnvironment');
+  }
+  const changed = world === undefined ? builder : (changes.override?.(builder, world) ?? builder);
+  const moduleRef = await changed.compile();
   return listen(moduleRef.createNestApplication({ logger: false, forceCloseConnections: true }));
 }
 
@@ -174,6 +189,8 @@ export interface Environment {
   send(user: FixtureUser | null, call: Call): Promise<Reply>;
   /** Sends call with this Authorization header value. */
   sendWith(authorization: string | undefined, call: Call): Promise<Reply>;
+  /** The Authorization header value that send uses for user. */
+  authorization(user: FixtureUser): Promise<string>;
   close(): Promise<void>;
 }
 
@@ -208,7 +225,7 @@ export async function startEnvironment(
   const idp = await startIdp(world.fixture.users.shared.issuer);
   let api: RunningApi;
   try {
-    api = await startApi(apiConfig(database.appUrl, idp), changes);
+    api = await startApi(apiConfig(database.appUrl, idp), changes, world);
   } catch (error) {
     await idp.close();
     await admin.end();
@@ -234,6 +251,7 @@ export async function startEnvironment(
       return request(api.base, call, user === null ? undefined : `Bearer ${await tokenFor(user)}`);
     },
     sendWith: (authorization, call) => request(api.base, call, authorization),
+    authorization: async (user) => `Bearer ${await tokenFor(user)}`,
     async close() {
       try {
         await api.close();

@@ -9,12 +9,16 @@ import { PoolCloser, poolProvider } from './database/database.providers.js';
 import { TenantDatabase } from './database/tenant-database.js';
 import { FlagsController } from './flags/flags.controller.js';
 import { FlagsService } from './flags/flags.service.js';
-import { FLAGS_NOTIFIER, NoopNotifier } from './flags/notifier.js';
+import { FLAGS_NOTIFIER } from './flags/notifier.js';
 import { HealthController } from './health/health.controller.js';
 import { HealthService } from './health/health.service.js';
 import { MeController } from './me/me.controller.js';
 import { MembersController } from './members/members.controller.js';
 import { SdkKeysController } from './sdk-keys/sdk-keys.controller.js';
+import { InProcessNotifier } from './stream/in-process-notifier.js';
+import { SnapshotReader } from './stream/snapshot-reader.js';
+import { StreamController } from './stream/stream.controller.js';
+import { StreamHub } from './stream/stream-hub.js';
 import { CONFIG } from './tokens.js';
 
 @Module({})
@@ -30,6 +34,7 @@ export class AppModule {
         AuditController,
         MembersController,
         SdkKeysController,
+        StreamController,
       ],
       providers: [
         { provide: CONFIG, useValue: config },
@@ -43,7 +48,11 @@ export class AppModule {
         { provide: APP_GUARD, useClass: AccessGuard },
         RouteAccessCheck,
         FlagsService,
-        { provide: FLAGS_NOTIFIER, useClass: NoopNotifier },
+        SnapshotReader,
+        StreamHub,
+        // After a flag write commits, the notifier wakes this instance's streams of
+        // that tenant.
+        { provide: FLAGS_NOTIFIER, useClass: InProcessNotifier },
       ],
     };
   }

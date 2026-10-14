@@ -18,14 +18,25 @@ export interface RequestAuth {
   readonly member?: MemberScope;
 }
 
+/** A request made with an SDK key: the key's tenant, and no user. */
+export interface SdkScope {
+  readonly tenantId: string;
+}
+
 const AUTH = Symbol('rff.auth');
+const SDK = Symbol('rff.sdk');
 
 interface WithAuth {
   [AUTH]?: RequestAuth;
+  [SDK]?: SdkScope;
 }
 
 export function setRequestAuth(request: object, auth: RequestAuth): void {
   (request as WithAuth)[AUTH] = auth;
+}
+
+export function setSdkAuth(request: object, scope: SdkScope): void {
+  (request as WithAuth)[SDK] = scope;
 }
 
 function authOf(context: ExecutionContext): RequestAuth {
@@ -45,5 +56,14 @@ export const CurrentMember = createParamDecorator(
     const member = authOf(context).member;
     if (member === undefined) throw new Error('the route reads a tenant but declares no role');
     return member;
+  },
+);
+
+/** The tenant of the request's SDK key. */
+export const CurrentSdkTenant = createParamDecorator(
+  (_data: unknown, context: ExecutionContext): SdkScope => {
+    const scope = context.switchToHttp().getRequest<WithAuth>()[SDK];
+    if (scope === undefined) throw new Error('the route reads an SDK tenant but takes no key');
+    return scope;
   },
 );

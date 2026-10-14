@@ -52,6 +52,16 @@ export async function bumpVersion(client: TenantClient, tenantId: string): Promi
   return row === undefined ? null : bigintFromText(row.version);
 }
 
+/** The tenant's current version, or null when the tenant does not exist. */
+export async function readVersion(client: TenantClient, tenantId: string): Promise<number | null> {
+  const { rows } = await client.query<{ version: string }>(
+    'SELECT version::text FROM public.tenants WHERE id = $1',
+    [tenantId],
+  );
+  const row = rows[0];
+  return row === undefined ? null : bigintFromText(row.version);
+}
+
 export interface Snapshot {
   readonly tenantId: string;
   readonly version: number;

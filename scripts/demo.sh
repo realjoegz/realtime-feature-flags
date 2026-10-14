@@ -5,7 +5,8 @@
 #   scripts/demo.sh
 #
 # For now it checks that both API replicas answer GET /health with their own instance
-# name, and that both refuse GET /me without a token. Every check polls until a
+# name, that both refuse GET /me without a token, and that both refuse the SDK
+# stream, GET /sdk/stream, without an SDK key. Every check polls until a
 # deadline instead of trusting one request, because port forwarding can lag a
 # container that compose already reports healthy.
 set -euo pipefail
@@ -34,5 +35,7 @@ expect_reply "$API_1/health" 200 '{"status":"ok","instance":"api-1"}'
 expect_reply "$API_2/health" 200 '{"status":"ok","instance":"api-2"}'
 expect_reply "$API_1/me" 401 '{"message":"Unauthorized","statusCode":401}'
 expect_reply "$API_2/me" 401 '{"message":"Unauthorized","statusCode":401}'
+expect_reply "$API_1/sdk/stream" 401 '{"message":"Unauthorized","statusCode":401}'
+expect_reply "$API_2/sdk/stream" 401 '{"message":"Unauthorized","statusCode":401}'
 
 echo "demo: all checks passed"

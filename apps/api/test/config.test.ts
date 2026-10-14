@@ -28,6 +28,7 @@ describe('configuration from the environment', () => {
         jwksUrl: 'http://dex:5556/dex/keys',
         audience: 'rff-api',
       },
+      stream: { heartbeatMs: 15_000 },
     });
     expect(
       loadConfig({
@@ -38,11 +39,13 @@ describe('configuration from the environment', () => {
         RFF_HTTP_PORT: '4002',
         RFF_DB_POOL_MAX: '3',
         RFF_DB_CONNECT_DEADLINE_MS: '0',
+        RFF_STREAM_HEARTBEAT_MS: '250',
       }),
     ).toMatchObject({
       http: { host: '0.0.0.0', port: 4002 },
       database: { poolMax: 3, connectDeadlineMs: 0 },
       auth: { audience: 'other-api' },
+      stream: { heartbeatMs: 250 },
     });
   });
 
@@ -53,6 +56,7 @@ describe('configuration from the environment', () => {
           RFF_HTTP_PORT: '70000',
           RFF_DB_POOL_MAX: '0',
           RFF_DB_CONNECT_DEADLINE_MS: '1e3',
+          RFF_STREAM_HEARTBEAT_MS: '5',
         }),
       ),
     ).toEqual([
@@ -62,6 +66,7 @@ describe('configuration from the environment', () => {
       'RFF_DB_CONNECT_DEADLINE_MS must be an integer from 0 to 600000, got "1e3"',
       'RFF_AUTH_ISSUER is required',
       'RFF_AUTH_JWKS_URL is required',
+      'RFF_STREAM_HEARTBEAT_MS must be an integer from 10 to 600000, got "5"',
     ]);
   });
 

@@ -24,12 +24,22 @@ export interface AuthConfig {
   readonly audience: string;
 }
 
+/** The SDK stream, GET /sdk/stream. */
+export interface StreamConfig {
+  /**
+   * How often an open stream gets a heartbeat, a comment frame. A client that
+   * receives no bytes for three intervals takes the connection for dead.
+   */
+  readonly heartbeatMs: number;
+}
+
 export interface Config {
   readonly http: { readonly host: string; readonly port: number };
   /** Name of this replica, returned by GET /health. */
   readonly instance: string;
   readonly database: DatabaseConfig;
   readonly auth: AuthConfig;
+  readonly stream: StreamConfig;
 }
 
 export interface MigrateConfig {
@@ -66,6 +76,9 @@ export function loadConfig(env: Env): Config {
       issuer: read.string('RFF_AUTH_ISSUER'),
       jwksUrl: read.httpUrl('RFF_AUTH_JWKS_URL'),
       audience: read.string('RFF_AUTH_AUDIENCE', 'rff-api'),
+    },
+    stream: {
+      heartbeatMs: read.integer('RFF_STREAM_HEARTBEAT_MS', 15_000, 10, 600_000),
     },
   };
   read.done();

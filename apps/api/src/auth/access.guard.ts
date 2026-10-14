@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   type CanActivate,
   type ExecutionContext,
@@ -10,7 +11,7 @@ import {
 import { TenantDatabase } from '../database/tenant-database.js';
 import { notFound } from '../http/errors.js';
 import { accessOf, ROLE_RANK } from './access.js';
-import { setRequestAuth } from './request-auth.js';
+import { setRequestAuth, setSdkAuth } from './request-auth.js';
 import { KeySetUnavailableError, TokenVerifier } from './token-verifier.js';
 
 // Runs before every route handler (registered as APP_GUARD). Membership is read from
@@ -20,6 +21,11 @@ import { KeySetUnavailableError, TokenVerifier } from './token-verifier.js';
 //   no or invalid token, or a token for an unknown user   401
 //   not a member of the path's tenant, or no such tenant   404, as for a missing resource
 //   a member below the route's role                         403
+//
+// A route that requires an SDK key takes no user token: its tenant is the key's,
+// found by the key's SHA-256 through tenant_id_for_sdk_key on every request, so a
+// revoked key is refused from its next request on. A missing, malformed, unknown or
+// revoked key, and a user token, all get the same 401.
 
 /** The parts of Express's request and response that the guard uses. */
 interface Request {
@@ -33,6 +39,10 @@ interface Response {
 // The scheme is case-insensitive (RFC 9110); the token is three base64url segments,
 // the last one empty for an unsigned token, which the verifier then refuses.
 const BEARER = /^bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*)$/i;
+
+// rff_sdk_ and 32 bytes in base64url without padding, as POST /sdk-keys issues them.
+// The scheme is case-insensitive; the key is not.
+const SDK_KEY = /^[Bb][Ee][Aa][Rr][Ee][Rr] (rff_sdk_[A-Za-z0-9_-]{43})$/;
 
 @Injectable()
 export class AccessGuard implements CanActivate {
@@ -51,6 +61,11 @@ export class AccessGuard implements CanActivate {
 
     const http = context.switchToHttp();
     const request = http.getRequest<Request>();
+    if (level === 'sdk-key') {
+      const tenantId = await this.sdkKeyTenant(request, http.getResponse<Response>());
+      setSdkAuth(request, { tenantId });
+      return true;
+    }
     const userId = await this.signedInUser(request, http.getResponse<Response>());
     if (level === 'signed-in') {
       setRequestAuth(request, { userId });
@@ -66,13 +81,17 @@ export class AccessGuard implements CanActivate {
     return true;
   }
 
+  private async sdkKeyTenant(request: Request, response: Response): Promise<string> {
+    const key = SDK_KEY.exec(request.headers.authorization ?? '')?.[1];
+    const hash = key === undefined ? null : createHash('sha256').update(key).digest();
+    const tenantId = hash === null ? null : await this.db.tenantIdForSdkKeyHash(hash);
+    if (tenantId === null) throw refuse(response);
+    return tenantId;
+  }
+
   private async signedInUser(request: Request, response: Response): Promise<string> {
-    const refuse = (): UnauthorizedException => {
-      response.setHeader('WWW-Authenticate', 'Bearer');
-      return new UnauthorizedException();
-    };
     const match = BEARER.exec(request.headers.authorization ?? '');
-    if (match === null) throw refuse();
+    if (match === null) throw refuse(response);
     let verified;
     try {
       verified = await this.tokens.verify(match[1] as string);
@@ -81,10 +100,16 @@ export class AccessGuard implements CanActivate {
         this.logger.warn(error.message);
         throw new ServiceUnavailableException();
       }
-      throw refuse();
+      throw refuse(response);
     }
     const userId = await this.db.userIdForSubject(verified.issuer, verified.subject);
-    if (userId === null) throw refuse();
+    if (userId === null) throw refuse(response);
     return userId;
   }
+}
+
+/** 401 with the challenge that tells the client to send a bearer token. */
+function refuse(response: Response): UnauthorizedException {
+  response.setHeader('WWW-Authenticate', 'Bearer');
+  return new UnauthorizedException();
 }

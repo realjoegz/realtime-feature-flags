@@ -1,7 +1,10 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
 import { type INestApplication } from '@nestjs/common';
 import type { AccessLevel } from '../../src/auth/access.js';
 import type { Call, Environment, Reply, World } from '../support/api.js';
+import { databaseSnapshot } from '../support/snapshots.js';
+import { openStream } from '../support/sse.js';
 import type { FixtureUser } from './fixture.js';
 import { type Finding, inSequence } from './detectors.js';
 
@@ -29,6 +32,118 @@ export interface RouteCase {
 
 /** GET /me is about the caller, not a tenant: each user sees only itself. */
 export const SELF_ROUTE = 'GET /me';
+
+/**
+ * A route whose tenant is the SDK key's, so no request names another tenant: with
+ * B's key, A's request is B's own. Its cases are in isolation-routes.test.ts: A's
+ * key receives A's snapshot alone, B's key nothing of A, and every caller without
+ * an unrevoked key the same 401.
+ */
+export interface SdkKeyRouteCase {
+  readonly route: RouteName;
+  readonly access: 'sdk-key';
+  readonly status: number;
+  readonly call: () => Call;
+}
+
+export const STREAM_ROUTE = 'GET /sdk/stream';
+
+export const SDK_KEY_ROUTES: readonly SdkKeyRouteCase[] = [
+  {
+    route: STREAM_ROUTE,
+    access: 'sdk-key',
+    status: 200,
+    call: () => ({ method: 'GET', path: '/sdk/stream' }),
+  },
+];
+
+export interface StreamOutcome {
+  readonly findings: Finding[];
+  /** Everything sent to B's key and to the callers that must be refused. */
+  readonly repliesToOthers: { route: string; reply: { readonly text: string } }[];
+  /** Everything sent to A's key. */
+  readonly ownText: string;
+}
+
+/**
+ * GET /sdk/stream for A's key, B's key and callers without an unrevoked key. Each
+ * key's first event must be the snapshot of its own tenant exactly as the database
+ * holds it, and every other caller must get the same 401 as a request with no key.
+ */
+export async function streamFindings(env: Environment): Promise<StreamOutcome> {
+  const { fixture, people } = env.world;
+  const findings: Finding[] = [];
+  const finding = (detail: string): void => {
+    findings.push({ relation: STREAM_ROUTE, detail });
+  };
+  const repliesToOthers: StreamOutcome['repliesToOthers'] = [];
+
+  const firstEvent = async (name: string, key: string, tenantId: string): Promise<string> => {
+    const stream = await openStream(env.api.base, { authorization: `Bearer ${key}` });
+    try {
+      if (stream.status !== 200) {
+        finding(`${name} got ${stream.status}`);
+        return (await stream.reply()).text;
+      }
+      await stream.until(() => stream.events.length > 0, `the first event for ${name}`);
+      const expected = await databaseSnapshot(env.admin, tenantId);
+      const [event] = stream.events;
+      const own =
+        event?.type === 'snapshot' &&
+        event.lastEventId === String(expected.version) &&
+        isDeepStrictEqual(JSON.parse(event.data), expected);
+      if (!own) finding(`${name} did not receive the snapshot of its own tenant`);
+      return stream.text;
+    } finally {
+      stream.close();
+    }
+  };
+  const ownText = await firstEvent("A's key", fixture.sdkKeys.aActive.key, fixture.tenantA);
+  repliesToOthers.push({
+    route: STREAM_ROUTE,
+    reply: { text: await firstEvent("B's key", fixture.sdkKeys.bActive.key, fixture.tenantB) },
+  });
+
+  const refused: [string, string | undefined][] = [
+    ['no key', undefined],
+    ["A's revoked key", `Bearer ${fixture.sdkKeys.aRevoked.key}`],
+    ['an unknown key', `Bearer rff_sdk_${randomBytes(32).toString('base64url')}`],
+    ['a key one character short', `Bearer ${fixture.sdkKeys.aActive.key.slice(0, -1)}`],
+    ["A's key without the Bearer scheme", fixture.sdkKeys.aActive.key],
+    ["the token of A's owner", await env.authorization(people.shared)],
+  ];
+  const answers = await inSequence(refused, async ([name, authorization]) => {
+    const stream = await openStream(
+      env.api.base,
+      authorization === undefined ? {} : { authorization },
+    );
+    if (stream.status === 200) {
+      // A stream was opened for a caller that should have none: keep what it sent.
+      await stream
+        .until(() => stream.events.length > 0, `an event for ${name}`, 2000)
+        .catch(() => {});
+      stream.close();
+      finding(`${name} got 200`);
+      repliesToOthers.push({ route: STREAM_ROUTE, reply: { text: stream.text } });
+      return null;
+    }
+    const reply = await stream.reply();
+    repliesToOthers.push({ route: STREAM_ROUTE, reply });
+    return { name, reply };
+  });
+  const [noKey] = answers;
+  if (noKey === null || noKey === undefined || noKey.reply.status !== 401) {
+    finding('a request with no key did not get 401');
+  }
+  for (const answer of answers.slice(1)) {
+    if (answer !== null && noKey && comparable(answer.reply) !== comparable(noKey.reply)) {
+      finding(
+        `${answer.name} got ${comparable(answer.reply)}, but no key got ${comparable(noKey.reply)}`,
+      );
+    }
+  }
+  return { findings, repliesToOthers, ownText };
+}
 
 /** Routes that need no token, each with its reason and the call that reaches it. */
 export const PUBLIC_ROUTES: Readonly<Record<RouteName, { reason: string; call: Call }>> = {
@@ -162,7 +277,7 @@ export function servedRoutes(app: INestApplication): RouteName[] {
  */
 export function routeTableFindings(
   served: readonly RouteName[],
-  cases: readonly RouteCase[],
+  cases: readonly { readonly route: RouteName }[],
   publicRoutes: Readonly<Record<RouteName, unknown>>,
 ): Finding[] {
   const findings: Finding[] = [];
@@ -248,7 +363,7 @@ export async function refusalFindings(
 
 /** The canaries of A found in replies, one finding per reply and canary. */
 export function canaryReplyFindings(
-  replies: readonly { route: string; reply: Reply }[],
+  replies: readonly { route: string; reply: { readonly text: string } }[],
   canaries: ReadonlyMap<string, string>,
 ): Finding[] {
   return replies.flatMap(({ route, reply }) =>
@@ -304,6 +419,8 @@ const RANK: Readonly<Record<MatrixActor, number>> = {
 export function expectedStatus(access: AccessLevel, success: number, actor: MatrixActor): number {
   if (access === 'public') return success;
   if (actor === 'no token') return 401;
+  // A user's token is not an SDK key, whatever the user's role.
+  if (access === 'sdk-key') return 401;
   if (access === 'signed-in') return success;
   if (actor === 'non-member') return 404;
   return RANK[actor] >= RANK[access] ? success : 403;
