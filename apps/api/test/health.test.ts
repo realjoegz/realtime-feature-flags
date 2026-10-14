@@ -61,6 +61,23 @@ describe('GET /health', () => {
   });
 });
 
+describe('response headers', () => {
+  it('createApp sends no X-Powered-By header on a 200 or on a 404', async () => {
+    const app = await createApp(config('health-5'), { logger: false });
+    try {
+      const base = await listen(app);
+      const ok = await fetch(`${base}/health`);
+      expect(ok.status).toBe(200);
+      expect(ok.headers.has('x-powered-by')).toBe(false);
+      const missing = await fetch(`${base}/no-such-route`);
+      expect(missing.status).toBe(404);
+      expect(missing.headers.has('x-powered-by')).toBe(false);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe('shutdown', () => {
   it('createApp enables the shutdown hooks, and close() ends the pool', async () => {
     const before = process.listenerCount('SIGTERM');

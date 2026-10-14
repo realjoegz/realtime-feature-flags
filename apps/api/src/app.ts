@@ -21,6 +21,8 @@ export async function createApp(
     forceCloseConnections: true,
     logger: options.logger ?? ['log', 'warn', 'error'],
   });
+  // Express names itself in every response unless this is off.
+  app.disable('x-powered-by');
   // SIGTERM and SIGINT run the shutdown hooks: the HTTP server closes and the pool ends.
   app.enableShutdownHooks();
   return app;
